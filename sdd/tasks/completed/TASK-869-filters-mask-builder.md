@@ -444,8 +444,8 @@ When you pick up this task:
 
 *(Agent fills this in when done)*
 
-**Completed by**: <session or agent ID>
-**Date**: YYYY-MM-DD
-**Notes**:
+**Completed by**: Claude Code (interactive /sdd-start, Jesus Lara)
+**Date**: 2026-10-12
+**Notes**: `build_condition` → `pd.Series` (bool, NA→False via `_bool`), `create_filter` → `list[pd.Series]`, `create_filter_chain` → AND-reduced mask, new `combine_conditions`. `func`/`function` rejected, `$column` expression validated, `getFunction` import removed. Scalar/list string branches split into `_str_condition`/`_list_condition`; regex/fullmatch/list-contains via `re2_search`. Decimal values compared as float (previous string-format behaviour); bool stays in the numeric branch (previous behaviour). Ported 25 eval sites in the two test files; 37 new tests in `tests/test_filter_eval_hardening.py`. Known intermediate: `tests/test_catalog_filter.py::test_conditions_now_filters_rows` fails until TASK-870 updates `Filter.run` (it still joins the masks as strings).
 
 **Deviations from spec**: none

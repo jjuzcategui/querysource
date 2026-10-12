@@ -1,48 +1,43 @@
-import importlib
-import contextlib
-import builtins
+"""Resolve a named helper function from the QuerySource function allowlist."""
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Optional
+
 from navconfig.logging import logging
+
 from . import functions as qsfunctions
 
+# Module-owned helpers that must not be reachable by name from a request:
+# ``uri_exists`` performs an outbound HTTP request to a caller-supplied URI
+# (SSRF primitive); ``to_udf`` is itself a name-based dispatcher.
+_DENIED: frozenset[str] = frozenset({'uri_exists', 'to_udf'})
 
-def getFunction(fname: str) -> callable:
-    """
-    Get a function from a predefined whitelist of allowed functions.
+
+def getFunction(fname: str) -> Optional[Callable]:
+    """Return the callable ``querysource.utils.functions.<fname>`` or ``None``.
+
+    Only public callables *defined by* ``querysource.utils.functions`` are
+    resolvable (names it merely re-exports, such as ``Path`` or ``UUID``, are
+    not), minus ``_DENIED``. A name that is not a ``str``, starts with ``_``,
+    contains ``.`` or does not resolve returns ``None``. There is deliberately
+    no fallback to module globals, Python built-in names or dynamic module
+    imports (FEAT-166).
 
     Args:
-        fname (str): Name of the function to retrieve.
+        fname: Function name as written in a query/pipeline definition.
 
     Returns:
-        callable: The requested function.
-
-    Raises:
-        ValueError: If the requested function is not in the whitelist.
+        The allowlisted callable, or ``None`` when the name is not allowed.
     """
-    with contextlib.suppress(TypeError, AttributeError):
-        return getattr(qsfunctions, fname)
-    try:
-        func = globals().get(fname)
-        if func:
-            return func
-    except AttributeError:
-        pass
-    try:
-        return getattr(builtins, fname)
-    except AttributeError:
-        pass
-    # If the function name contains dots, try to import the module and get the attribute
-    if '.' in fname:
-        components = fname.split('.')
-        module_name = '.'.join(components[:-1])
-        attr_name = components[-1]
-        try:
-            module = importlib.import_module(module_name)
-            func = getattr(module, attr_name)
-            return func
-        except (ImportError, AttributeError) as e:
-            # Function doesn't exists:
-            print(f'Cannot find Module {e}')
-    logging.warning(
-        f"Function {fname} not found in any known modules."
-    )
-    return None
+    if not isinstance(fname, str) or not fname or fname.startswith('_') or '.' in fname:
+        logging.warning("Function %r is not an allowed QuerySource function.", fname)
+        return None
+    if fname in _DENIED:
+        logging.warning("Function %r is not allowed from a query definition.", fname)
+        return None
+    func = getattr(qsfunctions, fname, None)
+    if not callable(func) or getattr(func, '__module__', None) != qsfunctions.__name__:
+        logging.warning("Function %r not found in querysource.utils.functions.", fname)
+        return None
+    return func

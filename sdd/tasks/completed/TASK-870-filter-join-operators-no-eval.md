@@ -319,8 +319,8 @@ When you pick up this task:
 
 *(Agent fills this in when done)*
 
-**Completed by**: <session or agent ID>
-**Date**: YYYY-MM-DD
-**Notes**:
+**Completed by**: Claude Code (interactive /sdd-start, Jesus Lara)
+**Date**: 2026-10-12
+**Notes**: `Filter.run`: allowlisted `filter_conditions` (`Filter.filter_functions()`), `QueryException` on unknown key or function error (module `_logger`), masks combined with `combine_conditions(masks, self._operator)`, `Filter.condition` is descriptive text. `Join._apply_join_conditions`: `df.loc[combine_conditions(conditions, '&')]`. Also replaced the legacy `print()` calls in `Join._join` and `filters.py` helpers with `logging` so the source guard test (`no eval( / globals() / print(`) holds; ruff auto-fixed Join.py import order and `super()`. 10 operator-level tests appended to `tests/test_filter_eval_hardening.py` (Filter.run literal values, injection-shaped values select nothing, allowlist, OR operator, Join conditions incl. invalid expression).
 
-**Deviations from spec**: none
+**Deviations from spec**: two pre-existing `print()` calls in `filters.py` helpers (`drop_duplicates`) and one in `Join._join` were converted to `logging` — outside the listed edit sites but inside the task's files, required by the source-guard test and the codebase `print` ban.
