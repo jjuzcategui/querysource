@@ -1,225 +1,240 @@
-"""Functions for FilterRows."""
-import datetime
-import re
-from decimal import Decimal
-from typing import Optional
-import pandas as pd
-import numpy as np
-from navconfig.logging import logging
-from ...exceptions import QueryException
-from ...utils.getfunc import getFunction
+"""Functions for FilterRows.
 
+Condition builders (``build_condition``, ``create_filter``, ``create_filter_chain``,
+``combine_conditions``) return boolean ``pd.Series`` masks evaluated directly with
+pandas/``operator`` callables. No predicate string is ever built or ``eval``uated
+(FEAT-166). Regex expressions run on RE2 only (``querysource.types.dt.regex``).
+"""
+import datetime
+import operator as _op
+import re
+from collections.abc import Callable
+from decimal import Decimal
+from functools import reduce
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+from navconfig.logging import logging
+
+from ...exceptions import QueryException
+from .regex import check_regex_safety, re2_search
 
 valid_operators = ['+', '-', '*', '/', '%', '==', '!=', '>', '<', '>=', '<=', '/', '//']
 
 # Operators that produce a boolean mask suitable for filtering rows.
-# Used to validate `expression` in the numeric and datetime branches of
-# build_condition, where the original code interpolated any string and
-# deferred the failure to pandas eval.
 comparison_operators = frozenset({'==', '!=', '>', '<', '>=', '<='})
 
+_COMPARISONS: dict[str, Callable] = {
+    '==': _op.eq, '!=': _op.ne, '>': _op.gt, '<': _op.lt, '>=': _op.ge, '<=': _op.le,
+}
+_LOGICAL: dict[str, Callable] = {'&': _op.and_, '|': _op.or_}
+_REGEX_EXPRESSIONS = frozenset({'regex', 'not_regex', 'fullmatch'})
 
-def build_condition(expression: str, column: str, value, condition: dict, df: pd.DataFrame = None) -> str:
-    """Build a filter condition for DataFrame filtering.
+
+def _text(series: pd.Series) -> pd.Series:
+    """Return ``series`` as the pandas ``string`` dtype for ``.str`` accessors."""
+    return series.astype("string")
+
+
+def _bool(mask: pd.Series) -> pd.Series:
+    """Normalise a (possibly nullable) boolean mask: ``NA`` never selects a row."""
+    return mask.fillna(False).astype(bool)
+
+
+def _regex_pattern(expression: str, value: str) -> str:
+    """Anchor a scalar regex per the historical ``str.match``/``str.fullmatch`` semantics."""
+    check_regex_safety(value)
+    if expression == 'fullmatch':
+        return f"^(?:{value})$"
+    return f"^(?:{value})"
+
+
+def _str_condition(expression: str, col: pd.Series, value: str) -> pd.Series:
+    """Mask for a scalar string ``value`` (see FEAT-166 spec §2)."""
+    if expression in _REGEX_EXPRESSIONS:
+        mask = re2_search(col, _regex_pattern(expression, value))
+        return ~mask if expression == 'not_regex' else mask
+    text = _text(col)
+    if expression in ('contains', 'not_contains'):
+        mask = text.str.contains(re.escape(value), case=False, na=False, regex=True)
+        return ~mask if expression == 'not_contains' else mask
+    if expression in ('startswith', 'not_startswith'):
+        mask = text.str.startswith(value, na=False)
+        return ~mask if expression == 'not_startswith' else mask
+    if expression in ('endswith', 'not_endswith'):
+        mask = text.str.endswith(value, na=False)
+        return ~mask if expression == 'not_endswith' else mask
+    if expression in _COMPARISONS:
+        return _COMPARISONS[expression](col, value)
+    raise QueryException(f"Invalid expression: {expression}")
+
+
+def _list_condition(expression: str, col: pd.Series, value: list) -> pd.Series:
+    """Mask for a list ``value`` (see FEAT-166 spec §2)."""
+    if expression in ('startswith', 'not_startswith', 'endswith', 'not_endswith'):
+        text = _text(col)
+        items = tuple(str(v) for v in value)
+        if expression.endswith('startswith'):
+            mask = text.str.startswith(items, na=False)
+        else:
+            mask = text.str.endswith(items, na=False)
+        return ~mask if expression.startswith('not_') else mask
+    if expression in ('contains', 'not_contains'):
+        pattern = "|".join(re.escape(str(v)) for v in value)
+        mask = re2_search(col, pattern, ignore_case=True)
+        return ~mask if expression == 'not_contains' else mask
+    if expression in ('regex', 'not_regex'):
+        for item in value:
+            check_regex_safety(item)
+        mask = re2_search(col, "|".join(f"(?:{item})" for item in value))
+        return ~mask if expression == 'not_regex' else mask
+    if expression == 'fullmatch':
+        pattern = "|".join(re.escape(str(v)) for v in value)
+        return re2_search(col, f"^(?:{pattern})$")
+    if expression == '==':
+        return col.isin(value)
+    if expression == '!=':
+        return ~col.isin(value)
+    if expression in ('>', '>='):
+        return _COMPARISONS[expression](col, min(value))
+    if expression in ('<', '<='):
+        return _COMPARISONS[expression](col, max(value))
+    raise QueryException(f"tFilter: Invalid expression: {expression}")
+
+
+def build_condition(expression: str, column: str, value, condition: dict, df: pd.DataFrame) -> pd.Series:
+    """Build one boolean mask for ``df[column] <expression> value``.
+
+    See the FEAT-166 spec §2 for the expression table. No string is ever built
+    or evaluated; the mask is computed with pandas/``operator`` callables.
 
     Args:
-        expression: The filter expression to be applied.
-        column: The column to be filtered.
-        value: The value to be compared against. Can be a scalar or {"$column": "column_name"} for column-to-column comparison.
-        condition: The condition dictionary with additional context.
-        df: The DataFrame to which the filters will be applied (used for validating column references).
+        expression: Comparison, text, null or regex operator.
+        column: Column to test (must exist in ``df``).
+        value: Scalar, list, datetime or ``{"$column": "other"}`` reference.
+        condition: The raw condition dict (kept for signature compatibility).
+        df: DataFrame the mask is computed against.
 
     Returns:
-        a string representation of the filter condition.
+        A boolean ``pd.Series`` aligned to ``df.index``.
 
     Raises:
-        QueryException: If the expression is invalid or a referenced column doesn't exist.
+        QueryException: invalid expression for the value type, ``$column``
+            reference missing from ``df``, non-numeric ``gt``/``lt`` value,
+            unsafe or invalid regex.
     """
-    # Check if value is a column reference: {"$column": "column_name"}
+    col = df[column]
     if isinstance(value, dict) and "$column" in value:
         ref_column = value["$column"]
-        if df is not None and ref_column not in df.columns:
+        if ref_column not in df.columns:
             raise QueryException(
                 f"Referenced column '{ref_column}' not found in DataFrame."
             )
-        # Column-to-column comparison
-        return f"(df['{column}'] {expression} df['{ref_column}'])"
-
+        if expression not in _COMPARISONS:
+            raise QueryException(
+                f"Invalid expression '{expression}' for column reference on "
+                f"'{column}'. Allowed: {sorted(comparison_operators)}"
+            )
+        return _bool(_COMPARISONS[expression](col, df[ref_column]))
     if expression in ("gt", "lt"):
         if not isinstance(value, (int, float)):
             raise QueryException(
                 "Value must be numeric for column length filtering."
             )
-        op = ">" if expression == "gt" else "<"
-        return f"(df['{column}'].str.len() {op} {value})"
+        lengths = _text(col).str.len()
+        return _bool(lengths > value if expression == "gt" else lengths < value)
     if expression == "is_null":
-        return f"df['{column}'].isnull() | (df['{column}'] == '')"
-    elif expression == "not_null":
-        return f"~(df['{column}'].isnull() | (df['{column}'] == ''))"
-    elif expression == "is_empty":
-        return f"(df['{column}'] == '')"
-    elif isinstance(value, (int, float, Decimal)):
+        return _bool(col.isnull() | (col == ''))
+    if expression == "not_null":
+        return ~_bool(col.isnull() | (col == ''))
+    if expression == "is_empty":
+        return _bool(col == '')
+    if isinstance(value, (int, float, Decimal)):
         if expression not in comparison_operators:
             raise QueryException(
                 f"Invalid expression '{expression}' for numeric value on column "
                 f"'{column}'. Allowed: {sorted(comparison_operators)}"
             )
-        condition['value'] = value
-        return "(df['{column}'] {expression} {value})".format_map(
-            condition
-        )
-    elif isinstance(value, str):
-        if expression in ('regex', 'not_regex', 'fullmatch'):
-            if expression == 'regex':
-                return f"df['{column}'].str.match(r'{value}', na=False)"
-            if expression == 'not_regex':
-                return f"~df['{column}'].str.match(r'{value}', na=False)"
-            if expression == 'fullmatch':
-                return f"df['{column}'].str.fullmatch(r'{value}', na=False)"
-        else:
-            condition['value'] = f"'{value}'"
-            if expression == 'contains':
-                return f"df['{column}'].str.contains(r'{value}', na=False, case=False)"
-            elif expression == 'not_contains':
-                return f"~df['{column}'].str.contains(r'{value}', na=False, case=False)"
-            elif expression == 'startswith':
-                return f"df['{column}'].str.startswith('{value}')"
-            elif expression == 'not_startswith':
-                return f"~df['{column}'].str.startswith('{value}')"
-            elif expression == 'endswith':
-                return f"df['{column}'].str.endswith('{value}')"
-            elif expression == 'not_endswith':
-                return f"~df['{column}'].str.endswith('{value}')"
-            elif expression == '==':
-                return "(df['{column}'] {expression} {value})".format_map(
-                    condition
-                )
-            elif expression == '!=':
-                return "(df['{column}'] {expression} {value})".format_map(
-                    condition
-                )
-            elif expression in valid_operators:
-                # first: validate "expression" to be valid expression on Pandas.
-                return "(df['{column}'] {expression} {value})".format_map(
-                    condition
-                )
-            else:
-                raise QueryException(
-                    f"Invalid expression: {expression}"
-                )
-    elif isinstance(value, (np.datetime64, np.timedelta64, datetime.date)):
+        right = float(value) if isinstance(value, Decimal) else value
+        return _bool(_COMPARISONS[expression](col, right))
+    if isinstance(value, str):
+        return _bool(_str_condition(expression, col, value))
+    if isinstance(value, (np.datetime64, np.timedelta64, datetime.date)):
         # datetime.date catches datetime.datetime and pd.Timestamp via subclassing.
         if expression not in comparison_operators:
             raise QueryException(
                 f"Invalid expression '{expression}' for datetime value on column "
                 f"'{column}'. Allowed: {sorted(comparison_operators)}"
             )
-        if isinstance(value, datetime.date):
-            condition['value'] = f"pd.Timestamp('{pd.Timestamp(value)}')"
-        else:
-            condition['value'] = value
-        return "(df['{column}'] {expression} {value})".format_map(
-            condition
+        right = pd.Timestamp(value) if isinstance(value, datetime.date) else value
+        return _bool(_COMPARISONS[expression](col, right))
+    if isinstance(value, list):
+        return _bool(_list_condition(expression, col, value))
+    raise QueryException(f"Invalid expression: {expression}")
+
+
+def combine_conditions(conditions: list[pd.Series], operator: str = '&') -> pd.Series:
+    """Reduce boolean masks with ``&`` (AND) or ``|`` (OR).
+
+    Args:
+        conditions: Masks produced by ``create_filter``/``build_condition``.
+        operator: ``'&'`` or ``'|'``.
+
+    Returns:
+        A single boolean ``pd.Series``.
+
+    Raises:
+        QueryException: ``operator`` not in ``('&', '|')`` or ``conditions`` empty.
+    """
+    if operator not in _LOGICAL:
+        raise QueryException(
+            f"Filter: invalid logical operator '{operator}', expected '&' or '|'"
         )
-    elif isinstance(value, list):
-        if expression == 'startswith':
-            # Use tuple directly with str.startswith
-            val = tuple(value)
-            return f"(df['{column}'].str.startswith({val}))"
-        elif expression == 'not_startswith':
-            val = tuple(value)
-            return f"(~df['{column}'].str.startswith({val}))"
-        elif expression == 'endswith':
-            # Use tuple directly with str.endswith
-            val = tuple(value)
-            return f"(df['{column}'].str.endswith({val}))"
-        elif expression == 'not_endswith':
-            val = tuple(value)
-            return f"(~df['{column}'].str.endswith({val}))"
-        elif expression == 'contains':
-            regex_pattern = "|".join(map(re.escape, value))
-            return f"df['{column}'].str.contains(r'{regex_pattern}', na=False, case=False)"
-        elif expression == 'not_contains':
-            regex_pattern = "|".join(map(re.escape, value))
-            return f"~df['{column}'].str.contains(r'{regex_pattern}', na=False, case=False)"
-        elif expression == "regex":
-            # Regular expression match
-            regex_pattern = "|".join(map(str, value))
-            return f"df['{column}'].str.contains(r'{regex_pattern}', na=False)"
-        elif expression == "not_regex":
-            # Regular expression match
-            regex_pattern = "|".join(map(str, value))
-            return f"~df['{column}'].str.contains(r'{regex_pattern}', na=False)"
-        elif expression == "fullmatch":
-            # Full match
-            regex_pattern = "|".join(map(re.escape, value))
-            return f"df['{column}'].str.fullmatch(r'{regex_pattern}', na=False)"
-        elif expression == "==":
-            return f"df['{column}'].isin({value})"
-        elif expression == "!=":
-            # not:
-            return f"~df['{column}'].isin({value})"
-        elif expression in [">", ">="]:
-            return f"(df['{column}'] {expression} min({value}))"
-        elif expression in ["<", "<="]:
-            return f"(df['{column}'] {expression} max({value}))"
-        elif expression in valid_operators:
-            return f"(df['{column}'] {expression} {value!r})"
-        else:
-            raise QueryException(
-                f"tFilter: Invalid expression: {expression}"
-            )
+    if not conditions:
+        raise QueryException("Filter: no conditions to combine")
+    return reduce(_LOGICAL[operator], conditions)
 
-def create_filter_chain(expression: list, column: str, df: pd.DataFrame) -> list:
-    """Construct filter conditions for DataFrame filtering.
 
-    Using an expression builder to create a Pandas Filter condition.
+def create_filter_chain(expression: list, column: str, df: pd.DataFrame) -> pd.Series:
+    """Build and AND-reduce the masks of a chained expression list for one column.
 
     Args:
-        expression: A list of filter dictionaries, each specifying a column,
-            an expression, and a value.
-        column: The column to be filtered.
-        df: The DataFrame to which the filters will be applied.
+        expression: List of ``{expression, value}`` dicts applied to ``column``.
+        column: The column every chained condition tests.
+        df: DataFrame the masks are computed against.
 
     Returns:
-        A list of string conditions that can be used to filter the DataFrame.
+        A boolean ``pd.Series`` (logical AND of every chained condition).
 
     Raises:
-        QueryException: If a column name is missing, not found in the DataFrame,
-            or if an invalid expression is provided.
+        QueryException: invalid expression or empty chain.
     """
-    conditions = []
+    masks = []
     for condition in expression:
-        expression = condition.get('expression', '==')
+        expr = condition.get('expression', '==')
         value = condition.get('value', None)
-        column = condition.get('column')
-        new_condition = build_condition(expression, column, value, condition, df)
-        conditions.append(f"({new_condition})")
-    # Combine all conditions with a logical AND
-    if conditions:
-        return np.logical_and.reduce(conditions)
-    return None
+        masks.append(build_condition(expr, column, value, condition, df))
+    return combine_conditions(masks, '&')
 
 
-def create_filter(_filter: list, df: pd.DataFrame) -> list:
-    """Construct filter conditions for DataFrame filtering.
+def create_filter(_filter: list, df: pd.DataFrame) -> list[pd.Series]:
+    """Return one boolean mask per filter spec.
 
-    This method takes a list of filter specifications and converts them
-    into a list of string conditions suitable for DataFrame filtering.
+    ``func``/``function`` expressions are rejected (FEAT-166): a filter value is
+    data, never a function name.
 
     Args:
-        _filter: A list of filter dictionaries, each specifying a column,
-            an expression, and a value.
-        df: The DataFrame to which the filters will be applied.
+        _filter: Filter dicts, each with ``column``, ``expression`` and ``value``.
+        df: DataFrame the masks are computed against.
 
     Returns:
-        A list of string conditions that can be used to filter the DataFrame.
+        A list of boolean ``pd.Series`` aligned to ``df.index``.
 
     Raises:
-        QueryException: If a column name is missing, not found in the DataFrame,
-            or if an invalid expression is provided.
+        QueryException: missing/unknown column or unsupported expression.
     """
-    conditions = []
+    conditions: list[pd.Series] = []
     for condition in _filter:
         column = condition.get('column')
         if not column:
@@ -232,24 +247,14 @@ def create_filter(_filter: list, df: pd.DataFrame) -> list:
             )
         expression = condition.get('expression', '==')
         value = condition.get('value', None)
-
-        # --- New rule for filtering on column length ---
-        # If the expression is "gt" or "lt", compare the length of the column values.
         if expression in ('func', 'function'):
-            # Using .apply() to apply the function to Dataframe.
-            fn = getFunction(value)
-            if fn:
-                df = df[df[column].apply(fn)]
-            continue
+            raise QueryException(
+                f"Filter: expression '{expression}' is not supported"
+            )
         if isinstance(expression, list):
-            # Using a method chain to create a new expression builder.
-            new_conditions = create_filter_chain(expression, column, df)
-            conditions.extend(new_conditions)
+            conditions.append(create_filter_chain(expression, column, df))
             continue
-        else:
-            new_condition = build_condition(expression, column, value, condition, df)
-            conditions.append(f"({new_condition})")
-            continue
+        conditions.append(build_condition(expression, column, value, condition, df))
     return conditions
 
 
