@@ -220,3 +220,119 @@ def test_no_eval_in_filters_source():
     source = Path(mod.__file__).read_text(encoding="utf-8")
     assert "eval(" not in source
     assert "getFunction" not in source
+
+
+# --------------------------------------------------------------------------- #
+# Operator level (TASK-870): Filter.run / Join without eval
+# --------------------------------------------------------------------------- #
+import asyncio  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from querysource.queries.multi.operators.filter.flt import Filter  # noqa: E402
+from querysource.queries.multi.operators.Join import Join  # noqa: E402
+
+_SRC = Path(__file__).resolve().parents[1] / "querysource"
+
+
+def test_no_eval_or_globals_in_filter_sources():
+    for rel in (
+        "types/dt/filters.py",
+        "queries/multi/operators/filter/flt.py",
+        "queries/multi/operators/Join.py",
+    ):
+        text = (_SRC / rel).read_text(encoding="utf-8")
+        assert "eval(" not in text, rel
+        assert "globals()" not in text, rel
+        assert "print(" not in text, rel
+
+
+async def _run(op):
+    async with op as o:
+        return await o.run()
+
+
+def test_filter_run_quote_value_is_literal(text_df):
+    op = Filter(
+        data=text_df.copy(),
+        conditions=[{"column": "status", "expression": "==", "value": "active')"}],
+    )
+    out = asyncio.run(_run(op))
+    assert list(out["id"]) == [4]
+    assert isinstance(op.condition, str)
+    assert "active')" in op.condition
+
+
+def test_filter_run_injection_shaped_values_select_nothing(text_df):
+    for value in ("') | (df['amount'] > 0) | ('", "__import__('os').system('true')"):
+        op = Filter(
+            data=text_df.copy(),
+            filter=[{"column": "name", "expression": "contains", "value": value}],
+        )
+        # DataNotFound (a QueryException) — the literal text matches no row.
+        with pytest.raises(QueryException, match="No Data was Found"):
+            asyncio.run(_run(op))
+
+
+def test_filter_conditions_unknown_key_raises(text_df):
+    op = Filter(data=text_df.copy(), filter_conditions={"not_a_fn": {}})
+    with pytest.raises(QueryException, match="unknown filter function"):
+        asyncio.run(_run(op))
+
+
+@pytest.mark.parametrize("name", ["getFunction", "build_condition", "create_filter", "re", "pd", "logging"])
+def test_filter_conditions_module_attributes_are_not_functions(text_df, name):
+    op = Filter(data=text_df.copy(), filter_conditions={name: {}})
+    with pytest.raises(QueryException, match="unknown filter function"):
+        asyncio.run(_run(op))
+
+
+def test_filter_conditions_known_fn_applied(text_df):
+    op = Filter(data=text_df.copy(), filter_conditions={"drop_rows": {"status": ["inactive"]}})
+    out = asyncio.run(_run(op))
+    assert "inactive" not in set(out["status"].dropna())
+    assert list(out["id"]) == [1, 3, 4, 5]
+
+
+def test_filter_conditions_function_error_propagates(text_df):
+    op = Filter(data=text_df.copy(), filter_conditions={"drop_columns": {"columns": "not-a-list", "bogus": 1}})
+    with pytest.raises(QueryException, match="error applying 'drop_columns'"):
+        asyncio.run(_run(op))
+
+
+def test_filter_operator_or(text_df):
+    conds = [
+        {"column": "amount", "expression": "<", "value": 15},
+        {"column": "status", "expression": "==", "value": "active')"},
+    ]
+    out = asyncio.run(_run(Filter(data=text_df.copy(), conditions=conds, operator="|")))
+    assert list(out["id"]) == [1, 4]
+    with pytest.raises(QueryException, match="logical operator"):
+        asyncio.run(_run(Filter(data=text_df.copy(), conditions=conds, operator="and")))
+
+
+def test_join_conditions_no_eval():
+    calls = pd.DataFrame({
+        "user_id": [1, 2, 3],
+        "called_at": pd.to_datetime(["2024-01-10", "2024-02-01", "2024-03-01"]),
+        "note": ["ok", "x') | (df['user_id'] > 0) | ('", "ok"],
+    })
+    users = pd.DataFrame({
+        "user_id": [1, 2, 3],
+        "created_at": pd.to_datetime(["2024-01-01", "2024-02-15", "2024-02-01"]),
+    })
+    op = Join(
+        data={"calls": calls, "users": users},
+        left="calls", right="users", using="user_id", type="inner",
+        join_conditions=[{"left": "called_at", "expression": ">=", "right": "created_at"}],
+    )
+    out = asyncio.run(_run(op))
+    assert isinstance(out, pd.DataFrame)
+    assert list(out["user_id"]) == [1, 3]
+
+    bad = Join(
+        data={"calls": calls.copy(), "users": users.copy()},
+        left="calls", right="users", using="user_id",
+        join_conditions=[{"left": "called_at", "expression": "contains", "right": "created_at"}],
+    )
+    with pytest.raises(QueryException):
+        asyncio.run(_run(bad))

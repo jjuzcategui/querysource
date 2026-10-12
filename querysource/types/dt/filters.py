@@ -398,11 +398,11 @@ def fill_nulls(df: pd.DataFrame, field: str, column: str):
                 lambda x: x.strip() if isinstance(x, str) else x
             ).replace("", np.nan)
         except Exception as err:
-            print("ERROR = ", err)
+            logging.error("drop_duplicates error: %s", err)
 
         # Ensure there are no duplicate index labels before filling nulls
         if df.index.duplicated().any():
-            print("Warning: Duplicate index labels found. Resetting index to prevent issues.")
+            logging.warning("Duplicate index labels found. Resetting index to prevent issues.")
             df = df.reset_index(drop=True)
 
         # Fill null values in the field with values from the specified column
