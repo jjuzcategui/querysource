@@ -245,8 +245,8 @@ When you pick up this task:
 
 *(Agent fills this in when done)*
 
-**Completed by**: <session or agent ID>
-**Date**: YYYY-MM-DD
-**Notes**:
+**Completed by**: Claude Code (interactive /sdd-start, Jesus Lara)
+**Date**: 2026-10-12
+**Notes**: Rewrote `getFunction` as an allowlist over public callables of `querysource.utils.functions`; dotted names, built-ins, module globals, private names, non-strings and non-callables return `None` (warning logged). Removed `importlib`/`contextlib`/`builtins` imports. Callers (`Map._call_fn`, `transforms.apply_function`, `utils/fn.py`) unchanged. 4 tests (22 cases) in `tests/test_getfunc_allowlist.py`; `tests/test_catalog_map.py` still green.
 
 **Deviations from spec**: none

@@ -215,8 +215,8 @@ When you pick up this task:
 
 *(Agent fills this in when done)*
 
-**Completed by**: <session or agent ID>
-**Date**: YYYY-MM-DD
-**Notes**:
+**Completed by**: Claude Code (interactive /sdd-start, Jesus Lara)
+**Date**: 2026-10-12
+**Notes**: Removed `func`/`function` from the `filterExpression` enum and rewrote the `value` description in `Filter.catalog.yaml`; added `## In-memory Filter / Join` to `docs/FILTER_OPERATORS.md` before `## qsurl`; added `test_filter_expression_enum_has_no_function_dispatch` to `tests/test_catalog_filter.py`. All five original doc headings kept.
 
 **Deviations from spec**: none

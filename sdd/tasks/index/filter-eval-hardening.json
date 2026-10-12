@@ -35,7 +35,7 @@
       "feature_id": "FEAT-166",
       "feature": "filter-eval-hardening",
       "spec": "sdd/specs/filter-eval-hardening.spec.md",
-      "status": "in-progress",
+      "status": "done",
       "priority": "high",
       "effort": "S",
       "depends_on": [],
@@ -43,8 +43,9 @@
       "parallelism_notes": "No dependencies: rewrites querysource/utils/getfunc.py only; no other FEAT-166 task touches it (TASK-869 removes its import from filters.py but does not need the new body).",
       "assigned_to": null,
       "started_at": "2026-10-12T02:35:22+00:00",
-      "completed_at": null,
-      "file": "sdd/tasks/active/TASK-868-getfunction-allowlist.md"
+      "completed_at": "2026-10-12T02:36:09+00:00",
+      "file": "sdd/tasks/completed/TASK-868-getfunction-allowlist.md",
+      "verification": "verified"
     },
     {
       "id": "TASK-869",
@@ -53,7 +54,7 @@
       "feature_id": "FEAT-166",
       "feature": "filter-eval-hardening",
       "spec": "sdd/specs/filter-eval-hardening.spec.md",
-      "status": "pending",
+      "status": "in-progress",
       "priority": "high",
       "effort": "L",
       "depends_on": [
@@ -62,7 +63,7 @@
       "parallel": true,
       "parallelism_notes": "Imports re2_search and check_regex_safety from TASK-867 (querysource/types/dt/regex.py). Creates tests/test_filter_eval_hardening.py that TASK-870 appends to.",
       "assigned_to": null,
-      "started_at": null,
+      "started_at": "2026-10-12T02:36:13+00:00",
       "completed_at": null,
       "file": "sdd/tasks/active/TASK-869-filters-mask-builder.md"
     },
@@ -93,7 +94,7 @@
       "feature_id": "FEAT-166",
       "feature": "filter-eval-hardening",
       "spec": "sdd/specs/filter-eval-hardening.spec.md",
-      "status": "in-progress",
+      "status": "done",
       "priority": "medium",
       "effort": "S",
       "depends_on": [],
@@ -101,8 +102,9 @@
       "parallelism_notes": "No dependencies: edits Filter.catalog.yaml, docs/FILTER_OPERATORS.md and tests/test_catalog_filter.py, none of which any other FEAT-166 task modifies; the enum edit does not need TASK-869's code change.",
       "assigned_to": null,
       "started_at": "2026-10-12T02:35:22+00:00",
-      "completed_at": null,
-      "file": "sdd/tasks/active/TASK-871-filter-catalog-docs.md"
+      "completed_at": "2026-10-12T02:36:11+00:00",
+      "file": "sdd/tasks/completed/TASK-871-filter-catalog-docs.md",
+      "verification": "verified"
     }
   ]
 }
