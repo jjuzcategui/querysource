@@ -52,9 +52,10 @@ def build_error_payload(
 ) -> dict[str, Any]:
     """Build a client-safe error payload.
 
-    Always logs full detail (message + traceback) server-side under a
-    generated ``error_id``.  Returns a minimal payload unless ``debug=True``,
-    in which case the original detail and traceback are included.
+    Always logs server-side under a generated ``error_id``: 5xx at ERROR with
+    the full traceback, 4xx at WARNING with the detail only (no traceback).
+    Returns a minimal payload unless ``debug=True``, in which case the
+    original detail and traceback are included.
 
     Args:
         category: Error category key (``"bad_request"``, ``"query_error"``,
@@ -96,7 +97,7 @@ def build_error_payload(
     # 1. Generate a short, unique correlation ID
     error_id = uuid.uuid4().hex[:12]
 
-    # 2. Capture the traceback string (always for the log; exposed only in debug mode)
+    # 2. Capture the traceback string (logged for 5xx; exposed only in debug mode)
     trace: str = traceback.format_exc(limit=20)
     # ``traceback.format_exc()`` returns "NoneType: None\n" when there is no
     # active exception — normalise to an empty string.
@@ -108,15 +109,27 @@ def build_error_payload(
     if exception is not None:
         detail = str(exception)
 
-    # 4. Log the full detail server-side, tagged with error_id
-    log.error(
-        "[%s] category=%s status=%s detail=%r trace=%s",
-        error_id,
-        category,
-        status,
-        detail or "(no detail)",
-        trace or "(no traceback)",
-    )
+    # 4. Log server-side, tagged with error_id. A 4xx is a client/usage
+    #    outcome (unknown slug, bad payload, empty result): WARNING without a
+    #    stack trace keeps production logs and alerting free of false
+    #    positives. Server failures (5xx) keep ERROR + full traceback.
+    if status >= 500:
+        log.error(
+            "[%s] category=%s status=%s detail=%r trace=%s",
+            error_id,
+            category,
+            status,
+            detail or "(no detail)",
+            trace or "(no traceback)",
+        )
+    else:
+        log.warning(
+            "[%s] category=%s status=%s detail=%r",
+            error_id,
+            category,
+            status,
+            detail or "(no detail)",
+        )
 
     # 5. Resolve the public message (never expose raw DB / internal text)
     # Scoped override (FEAT-146): OutputError detail is client-visible even
