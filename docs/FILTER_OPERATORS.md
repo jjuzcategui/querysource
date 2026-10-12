@@ -88,6 +88,18 @@ The `contains`, `not_contains`, `icontains`, and `not_icontains` operators requi
 three characters. A partial-matching operator cannot be combined with another key for the
 same field: one operator per field is required.
 
+## In-memory Filter / Join
+
+The MultiQuery `Filter` operator and `Join.join_conditions` evaluate conditions
+as pandas boolean masks (FEAT-166). Values are compared as data and never
+interpreted as code or as a Python expression. `regex`, `not_regex` and
+`fullmatch` run on RE2 through `pyarrow.compute` (linear time): patterns longer
+than 200 characters, patterns with nested quantifiers, lookaround or
+backreferences are rejected, and when `pyarrow` is not installed these three
+expressions raise an error instead of falling back to Python's `re`. The
+`func`/`function` expressions were removed; `filter_conditions` keys must be one
+of `Filter.filter_functions()`.
+
 ## qsurl
 
 The [qsurl reference](QSURL.md) uses the same vocabulary: `~`, `~*`, `^=`, `^=*`, `$=`,

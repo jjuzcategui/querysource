@@ -124,8 +124,6 @@ schema:
         - is_null
         - not_null
         - is_empty
-        - func
-        - function
     filterCondition:
       type: object
       description: A single create_filter condition.
@@ -145,9 +143,9 @@ schema:
                 $ref: '#/$defs/filterExpression'
         value:
           description: >-
-            Value to compare against — a scalar, ``{"$column": "other_col"}`` for
-            column-to-column comparison, or a function name when ``expression``
-            is ``func``/``function``. Omitted for ``is_null``/``not_null``/``is_empty``.
+            Value to compare against — a scalar, a list, or ``{"$column": "other_col"}``
+            for column-to-column comparison. Omitted for ``is_null``/``not_null``/``is_empty``.
+            Values are always treated as data (never evaluated as code).
       required: [column]
       additionalProperties: true
     filterFunc:
