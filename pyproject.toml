@@ -68,7 +68,7 @@ dependencies = [
     "playwright==1.52.0",
     # NAV libraries - using compatible versions
     "proxylists>=0.14.0",
-    "async-notify[all]>=1.4.0",
+    "async-notify[default,uvloop,ses,slack,twilio,xmpp,server,push,google,azure,templates]>=1.4.0",
     "navconfig[default,uvloop]>=2.2.0",
     "navigator-api[uvloop,locale]>=2.12.22",
     "jsonschema>=4.22.0",
