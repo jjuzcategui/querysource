@@ -557,8 +557,11 @@ Verified against: `6e85f734`
   order but changes its return type to `list[pd.Series]`. It is only used by
   `flt.py`, `Join.py` and the two test files (verified by grep); no public
   re-export in `querysource/types/dt/__init__.py`.
-- D2. **`contains` stays case-insensitive** (`case=False`) and literal
-  (`re.escape`) — that is today's behaviour for scalars and lists.
+- D2. **`contains` is case-insensitive** (`case=False`) and **literal**
+  (`re.escape`). Correction (review, 2026-10-12): before FEAT-166 the *scalar*
+  value was passed to `str.contains` as a regex; only the list form was escaped.
+  Literal matching is a deliberate hardening and is documented in
+  `docs/FILTER_OPERATORS.md`.
 - D3. **`regex` keeps `str.match` semantics** (anchored at start, case
   sensitive) by prefixing `^(?:…)`; `fullmatch` wraps `^(?:…)$`. List `regex`
   stays unanchored (today it is `str.contains`). All go through RE2.
@@ -618,6 +621,14 @@ Verified against: `6e85f734`
 
 ## 9. Design Research Cross-Check
 
+> Post-implementation adversarial review (code-review agent, 2026-10-12) over
+> `git diff e45e5f33..c1aba580`: 1 high (`suppress` ran the request pattern on
+> Python `re`), 3 medium (fullmatch group escape, `getFunction` allowlist too
+> broad, `Map._call_fn` unrestricted `getattr`), 6 low. All CONFIRMED and fixed
+> in commit `fd91f7ce`, except: Decimal-vs-object-column equality (pre-existing,
+> kept), `transforms.py:696` `globals()` lookup (spec non-goal, follow-up), the
+> nested-quantifier heuristic (kept for parity with `qsurl/residual.py`).
+
 > Model: — · Status: skipped (no accepted exploration document — spec scaffolded
 > from an inline security analysis; codex seat requires an accepted brainstorm/proposal)
 > · Transcript: —
@@ -653,3 +664,4 @@ Summary: **0** confirmed · **0** rejected · **0** escalated.
 | Version | Date | Author | Change |
 |---|---|---|---|
 | 0.1 | 2026-10-12 | Jesus Lara / Claude Code | Initial draft from the private security analysis of `Filter`/`Join`/`getFunction` |
+| 0.2 | 2026-10-12 | Claude Code (adversarial review fold-in) | Review fixes: `suppress` pattern on RE2 (`re2_find`), `check_regex_safety` compiles the bare pattern under RE2 (group-escape), `getFunction` limited to module-owned callables minus `uri_exists`/`to_udf`, `Filter.filter_functions()`/`Map.transform_functions()` module-owned only and `Map._call_fn` enforces it, shape validation in `build_condition`; D2 corrected. |
