@@ -1,6 +1,7 @@
 """Integration tests for Join + Column Filter workflows."""
 import pandas as pd
 import pytest
+
 from querysource.types.dt.filters import combine_conditions, create_filter
 
 

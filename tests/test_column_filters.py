@@ -1,8 +1,9 @@
 """Unit tests for column-to-column filtering with $column syntax."""
 import pandas as pd
 import pytest
-from querysource.types.dt.filters import combine_conditions, create_filter
+
 from querysource.exceptions import QueryException
+from querysource.types.dt.filters import combine_conditions, create_filter
 
 
 class TestColumnToColumnFilters:
@@ -424,7 +425,7 @@ class TestDatetimeBranchHardening:
             {
                 'column': 'fecha',
                 'expression': '<',
-                'value': _dt.datetime(2024, 2, 16),
+                'value': _dt.datetime(2024, 2, 16),  # noqa: DTZ001 - naive, matches naive column
             }
         ]
 
