@@ -93,7 +93,8 @@ through the Cython path.
 - G3 — `to_udf()` resolves only `UDF_LIST` members (env-overridable, same
   list `is_udf()` uses) and raises for anything else; the `builtins`
   fallback and the duplicate dispatcher in `querysource/utils/validators.py`
-  are gone.
+  are gone. The default list gains `FDOW`, `LDOW`, `LDOPM` (the helpers
+  §13.1 already advertises) in both engines and in the vocabulary registry.
 - G4 — Literal quoting is **idempotent** in both engines:
   `quote(quote(x)) == quote(x)`, and `quote(x)` round-trips any `x` without
   deleting characters. A value containing `'` renders as `'O''Brien'` under
@@ -101,6 +102,9 @@ through the Cython path.
 - G5 — No `print()` in `validators.pyx`; errors go through `logging`.
 - G6 — Docs (`QUERYSOURCE_DIALECT.md` §13.1/§13.2) describe the enforced
   contract, and the vocabulary endpoint stays consistent with it.
+- G7 — The `UDF_LIST`, `PG_CONSTANTS` and `PG_UDF` environment overrides are
+  honoured by the Rust extension exactly as by `validators.pyx` (parsed once,
+  at first use).
 
 ### Non-Goals (explicitly out of scope)
 
@@ -112,8 +116,6 @@ through the Cython path.
   other way round.
 - The ILIKE / partial-matching branches (FEAT-152/FEAT-180) — already
   idempotent; they are regression-tested, not changed.
-- Changing what `UDF_LIST` contains by default (see §8 Q1): the strict
-  default is kept unless the user decides otherwise.
 - The `@variable` replacement path (`QS_VARIABLES`, `abstract.pyx:444`) —
   already an explicit registry.
 - JSONB element filters, BETWEEN grammar (`filter_values.py`) — unchanged.
@@ -139,7 +141,10 @@ as a name-based dispatcher. `UDF_LIST` moves to one pure-Python source
 (`querysource/utils/udf_list.py`) imported by both `types/validators.pyx`
 and `utils/functions.pyx`, which also removes the circular-import reason
 `to_udf` currently uses the broken pure-Python `is_udf` from
-`utils/validators.py`.
+`utils/validators.py`. The default list is extended with `FDOW`, `LDOW` and
+`LDOPM` (Cython, Rust and `vocabulary.KEYWORD_REGISTRY`), and the three Rust
+allowlist statics read the same environment variables, so an operator
+override behaves identically on both paths.
 
 **B. Idempotent literal quoting (M3).** The builders remain the owners of
 final quoting (FEAT-165 contract), and `is_valid()` keeps pre-quoting plain
@@ -184,7 +189,9 @@ raw-query placeholders ──► safe_dict.rs ──► validators.rs::is_valid 
 | Existing Component | Integration Type | Notes |
 |---|---|---|
 | `is_valid()` `querysource/types/validators.pyx:625` | modifies | generic branch becomes closed; signature unchanged |
-| `is_pg_function()` `validators.pyx:209` / `rust/src/validators.rs:92` | modifies | exact `PG_UDF` membership (Rust gains a `PG_UDF` static, default `now()`) |
+| `is_pg_function()` `validators.pyx:209` / `rust/src/validators.rs:92` | modifies | exact `PG_UDF` membership (Rust gains an env-aware `PG_UDF` static, default `now()`; `UDF_LIST`/`PG_CONSTANTS` statics become env-aware too) |
+| `KEYWORD_REGISTRY` / `FUNCTION_REGISTRY` `querysource/utils/vocabulary.py:43,88` | modifies | `FDOW`, `LDOW`, `LDOPM` become keyword rows; `fdow`/`ldow` leave the informational list |
+| `tests/unit/test_vocabulary.py:47-52` | updates | pins the registry sizes/order |
 | `to_udf()` `querysource/utils/functions.pyx:821` | modifies | allowlist-only; raises `KeyError` otherwise |
 | `is_udf()` `querysource/utils/validators.py:77` | removes | dead dispatcher; `functions.pyx:26` import replaced by `udf_list` |
 | `Entity.quoteString` `validators.pyx:590`, `quote_string` `validators.rs:164` | modifies | idempotent via `unquote_literal` |
@@ -203,6 +210,7 @@ pure-Python/Rust helper function (M3); see §3 skeletons.
 ### New Public Interfaces
 ```python
 # querysource/utils/udf_list.py (new, M2)
+DEFAULT_UDF_LIST: tuple[str, ...]          # 10 names: today's 7 + FDOW, LDOW, LDOPM
 def udf_list() -> list[str]: ...          # effective UDF_LIST (env-overridable), upper-cased copy
 def is_udf_keyword(value: str) -> bool: ...  # value.strip().upper() in udf_list()
 
@@ -210,6 +218,8 @@ def is_udf_keyword(value: str) -> bool: ...  # value.strip().upper() in udf_list
 def unquote_literal(value: str) -> str | None: ...  # inner text of a well-formed pre-quoted literal, else None
 ```
 ```rust
+// rust/src/validators.rs (M1)
+fn env_list(name: &str, default: &[&str], upper: bool) -> Vec<String>;  // mirrors validators.pyx:30 `_env_list`
 // rust/src/validators.rs (M3)
 pub fn unquote_literal(value: &str) -> Option<String>;
 ```
@@ -234,8 +244,10 @@ pub fn unquote_literal(value: &str) -> Option<String>;
 - **Path**: `querysource/types/validators.pyx`, `rust/src/validators.rs`
 - **Responsibility**: remove the config lookup and the `to_udf` fallback;
   make `is_pg_function` an exact `PG_UDF` membership test in both engines;
-  replace `print` with logging. Behaviour for keywords, constants, lists,
-  dicts, booleans, integers and typed hints is unchanged.
+  replace `print` with logging; make the three Rust allowlist statics
+  env-aware and give the Rust `UDF_LIST` the same 10-name default as M2's
+  `DEFAULT_UDF_LIST`. Behaviour for keywords, constants, lists, dicts,
+  booleans, integers and typed hints is unchanged.
 - **Depends on**: nothing (M2 only changes where `UDF_LIST` is read from).
 - **Interface Skeleton** *(signatures + docstrings only — bodies belong to task blueprints, FEAT-545)*:
   ```python
@@ -257,24 +269,32 @@ pub fn unquote_literal(value: &str) -> Option<String>;
   ```
   ```rust
   // rust/src/validators.rs  (modifies validators.rs:92, :269-345; adds PG_UDF static next to UDF_LIST at :21)
-  static PG_UDF: Lazy<Vec<&str>>;             // default ["now()"] — same default as validators.pyx:42
+  fn env_list(name: &str, default: &[&str], upper: bool) -> Vec<String>; // mirrors validators.pyx:30 _env_list: comma-split, trim, drop blanks, upper-case when `upper`
+  static UDF_LIST: Lazy<Vec<String>>;         // env_list("UDF_LIST", &DEFAULT_UDF_LIST, true) — verified: validators.rs:21 (today a static 7-name &str vec)
+  static PG_CONSTANTS: Lazy<Vec<String>>;     // env_list("PG_CONSTANTS", &["CURRENT_DATE", "CURRENT_TIMESTAMP"], true) — verified: validators.rs:34
+  static PG_UDF: Lazy<Vec<String>>;           // env_list("PG_UDF", &["now()"], false) — same default as validators.pyx:42
+  pub fn is_udf(value: &str) -> bool;         // unchanged signature (already exported, lib.rs:44); membership over the env-aware list
   pub fn is_pg_function(value: &str) -> bool; // exact PG_UDF membership (no `contains('(')`)
   pub fn is_valid(key: &str, value: &str, type_hint: Option<&str>, noquote: bool) -> String; // unchanged signature; `(` no longer bypasses quote_string
   ```
 
 ### Module 2: `to_udf` allowlist and single `UDF_LIST` source
 - **Path**: `querysource/utils/udf_list.py` (new), `querysource/utils/functions.pyx`,
-  `querysource/utils/validators.py`, `querysource/types/validators.pyx:27-40`
+  `querysource/utils/validators.py`, `querysource/types/validators.pyx:27-40`,
+  `querysource/utils/vocabulary.py`, `tests/unit/test_vocabulary.py`
 - **Responsibility**: one env-aware definition of the keyword list, consumed
   by `types/validators.pyx` (replacing its local `_env_list('UDF_LIST', udf)`)
   and by `to_udf`, which resolves **only** those names and raises otherwise.
-  Delete the dead pure-Python dispatcher `is_udf` (and its `UDF` list) from
-  `utils/validators.py` and the `builtins` fallback from `to_udf`.
+  The default list gains `FDOW`, `LDOW`, `LDOPM`; `vocabulary.py` promotes
+  them to `KeywordEntry` rows (and drops `fdow`/`ldow` from the informational
+  `FUNCTION_REGISTRY`). Delete the dead pure-Python dispatcher `is_udf` (and
+  its `UDF` list) from `utils/validators.py` and the `builtins` fallback from
+  `to_udf`. The Rust default list is updated by M1 (same file as its env rewrite).
 - **Depends on**: nothing.
 - **Interface Skeleton**:
   ```python
   # querysource/utils/udf_list.py  (new)
-  DEFAULT_UDF_LIST: tuple[str, ...] = ("CURRENT_YEAR", "CURRENT_MONTH", "TODAY", "YESTERDAY", "LAST_YEAR", "FDOM", "LDOM")  # verified: validators.pyx:27
+  DEFAULT_UDF_LIST: tuple[str, ...] = ("CURRENT_YEAR", "CURRENT_MONTH", "TODAY", "YESTERDAY", "LAST_YEAR", "FDOM", "LDOM", "FDOW", "LDOW", "LDOPM")  # first 7 verified: validators.pyx:27; fdow/ldow/ldopm verified: functions.pyx:147,150,206
 
   def udf_list() -> list[str]:
       """Effective keyword list: ``UDF_LIST`` env (comma-separated, stripped, upper-cased)
@@ -294,6 +314,14 @@ pub fn unquote_literal(value: &str) -> Option<String>;
 
   # querysource/utils/validators.py  (modifies validators.py:73-100)
   # DELETE: UDF, is_an_udf, is_udf (dispatcher). No importer remains after functions.pyx:26 is changed.
+
+  # querysource/utils/vocabulary.py  (modifies vocabulary.py:43-86 KEYWORD_REGISTRY, :88-150 FUNCTION_REGISTRY)
+  # ADD KeywordEntry rows "FDOW", "LDOW", "LDOPM" (category "date", returns "date-string",
+  #   descriptions: Monday of the current week / Sunday of the current week / last day of the
+  #   previous month, all YYYY-MM-DD) after "CURRENT_MONTH" (vocabulary.py:80).
+  # REMOVE the FunctionEntry rows name="fdow" (vocabulary.py:132) and name="ldow" (vocabulary.py:142);
+  #   FUNCTION_REGISTRY keeps date_diff, date_sum, days_ago, previous_month (4 entries).
+  # tests/unit/test_vocabulary.py:47-52 — pinned size 6 -> 4 and order without fdow/ldow.
   ```
 
 ### Module 3: Idempotent literal quoting (Cython + Rust)
@@ -367,6 +395,9 @@ pub fn unquote_literal(value: &str) -> Option<String>;
 | `test_config_key_is_a_plain_literal` | M1 | `is_valid('u', 'DBHOST')` → `"'DBHOST'"`; `is_valid('d', 'DBPWD', 'date')` → `"'DBPWD'"`; `validators.pyx` source has no `navconfig` import |
 | `test_function_name_is_a_plain_literal` | M1/M2 | `is_valid('c', 'midnight')` → `"'midnight'"`; `'today'`/`'TODAY'` still resolve to a quoted date |
 | `test_to_udf_rejects_non_keywords` | M2 | `to_udf('midnight')`, `to_udf('uri_exists')`, `to_udf('print')` raise `KeyError`; `to_udf('fdom')` returns a `YYYY-MM-DD` string; `UDF_LIST` env override honoured by both `udf_list()` and `to_udf` |
+| `test_default_udf_list_has_week_helpers` | M2 | `udf_keywords()` equals the 10-name default; `to_udf('fdow')`, `to_udf('LDOW')`, `to_udf('ldopm')` return `YYYY-MM-DD` strings; `rs.is_udf('LDOPM')` is True |
+| `test_vocabulary_week_keywords` | M2 | `build_vocabulary(udf_keywords(), pg_constants(), pg_udfs())['keywords']` lists `FDOW`, `LDOW`, `LDOPM` with description and example; `['functions']` has 4 entries |
+| `test_rust_env_override_parity` | M1 | fresh interpreter with `UDF_LIST="today, fdom"`, `PG_UDF="now(),my_fn()"`: `rs.is_udf('FDOM')` True, `rs.is_udf('LDOM')` False, `rs.is_pg_function('my_fn()')` True, `rs.is_valid('x', 'my_fn()', None, False)` == `my_fn()`; same values from `udf_keywords()`/`pg_udfs()` (shape of `tests/unit/test_udf_keyword_resolution.py:90`) |
 | `test_is_pg_function_exact` | M1 | Cython and Rust: `now()` → True; `pg_sleep(5)`, `(select 1)`, `lower('x')` → False; `PG_UDF` env override honoured (Cython) |
 | `test_parenthesis_value_is_quoted_all_dialects` | M1 | `{"name": "pg_sleep(5)"}` and `{"amount": {">": "x) OR (1=1"}}` render as quoted literals under pgsql Rust, pgsql Cython, sql, cql; BigQuery renders `amount > "x) OR (1=1"` |
 | `test_rust_is_valid_parenthesis` | M1 | `_qs_parsers.is_valid('k', 'pg_sleep(5)', None, False)` → `"'pg_sleep(5)'"` |
@@ -401,14 +432,15 @@ async def preprocess(conditions: dict, query: str = SQL, parser_cls=pgSQLParser)
 > This feature is complete when ALL of the following are true:
 
 - [ ] AC1 — `is_valid('u', 'DBHOST')` returns `"'DBHOST'"` and `is_valid('d', 'DBPWD', 'date')` returns `"'DBPWD'"`; `querysource/types/validators.pyx` no longer imports `navconfig.config` and has no `get_config_var`.
-- [ ] AC2 — `is_valid('c', 'midnight')` returns `"'midnight'"`; `to_udf('midnight')` raises `KeyError`; `to_udf('TODAY')`, `to_udf('today')`, `to_udf('fdom')` still return dates; `GET /api/v1/queries/vocabulary` keywords are unchanged; `querysource/utils/validators.py` has no `globals()[` and no `builtins` lookup.
+- [ ] AC2 — `is_valid('c', 'midnight')` returns `"'midnight'"`; `to_udf('midnight')` raises `KeyError`; `to_udf('TODAY')`, `to_udf('today')`, `to_udf('fdom')` still return dates; `udf_keywords()` returns `['CURRENT_YEAR', 'CURRENT_MONTH', 'TODAY', 'YESTERDAY', 'LAST_YEAR', 'FDOM', 'LDOM', 'FDOW', 'LDOW', 'LDOPM']`, `to_udf('ldopm')` returns a `YYYY-MM-DD` date, and `build_vocabulary(udf_keywords(), pg_constants(), pg_udfs())` lists those 10 keywords and 4 informational functions; `querysource/utils/validators.py` has no `globals()[` and no `builtins` lookup.
 - [ ] AC3 — `is_valid('k', 'pg_sleep(5)')` returns `"'pg_sleep(5)'"` and `is_valid('k', 'now()')` returns `now()` in both Cython and Rust (`_qs_parsers.is_valid`); `BigQueryParser` renders `{"amount": {">": "x) OR (1=1"}}` as `amount > "x) OR (1=1"`.
 - [ ] AC4 — `{"name": "O'Brien"}` renders `name='O''Brien'` under pgsql (Rust and Cython), `SQLParser` and `CQLParser`, and `name="O'Brien"` under `BigQueryParser`; the same holds for comparison dicts, IN lists and `!`-negation; `Entity.quoteString` and Rust `quote_string` are idempotent per `test_quote_string_idempotent`; `is_valid('n', "O'Brien", 'string')` returns `"'O''Brien'"`.
 - [ ] AC5 — `grep -c "print(" querysource/types/validators.pyx` is `0`; `grep -c "quote_string(&escape_string(" rust/src/pgsql_parser.rs rust/src/sql_parser.rs` is `0` for both files.
-- [ ] AC6 — `docs/QUERYSOURCE_DIALECT.md` §13.1 states that only `UDF_LIST` keywords are resolved (no "other zero-argument helpers" sentence) and §13.2 states that any other value, including one containing `(`, is a quoted literal; `docs/FILTER_OPERATORS.md` unchanged.
+- [ ] AC6 — `docs/QUERYSOURCE_DIALECT.md` §13.1 states that only `UDF_LIST` keywords are resolved (no "other zero-argument helpers" sentence), its table gains `FDOW`, `LDOW`, `LDOPM` rows, and §13.2 states that any other value, including one containing `(`, is a quoted literal; `docs/FILTER_OPERATORS.md` unchanged.
 - [ ] AC7 — `pytest tests/unit/test_where_value_hardening.py tests/qsurl/test_pg_ilike.py tests/unit/test_udf_keyword_resolution.py tests/test_dialect_filter_preprocessing.py tests/unit/test_cython_filter_fallback.py tests/unit/test_vocabulary.py tests/test_validators_array_type.py -v` passes after `python setup.py build_ext --inplace` and `make build-rust && make stage-rust`.
 - [ ] AC8 — `cargo test --no-default-features` (from `rust/`) passes the new tests and introduces no new failures beyond the 4 pre-existing ones recorded on 2026-10-07.
 - [ ] AC9 — `ruff check querysource/utils/udf_list.py querysource/parsers/filter_values.py querysource/utils/validators.py tests/unit/test_where_value_hardening.py` is clean.
+- [ ] AC11 — In a fresh interpreter with `UDF_LIST="today, fdom"` and `PG_UDF="now(),my_fn()"`, `rs.is_udf('FDOM')` is True, `rs.is_udf('LDOM')` is False and `rs.is_pg_function('my_fn()')` is True, matching `udf_keywords()`/`pg_udfs()` on the Cython side.
 - [ ] AC10 — No public signature changes: `is_valid`, `to_udf`, `Entity.quoteString`, `quote_string`, `is_pg_function` keep their parameters; `udf_keywords()`, `pg_udfs()`, `pg_constants()` (`validators.pyx:219-229`) unchanged.
 
 ---
@@ -430,8 +462,8 @@ from querysource.parsers.sql import SQLParser            # verified: querysource
 from querysource.parsers.cql import CQLParser            # verified: querysource/parsers/cql.pyx
 from querysource.parsers.bigquery import BigQueryParser  # verified: querysource/parsers/bigquery.pyx
 from querysource.models import QueryObject               # verified: tests/test_dialect_filter_preprocessing.py:7
-from querysource.qs_parsers import _qs_parsers as rs     # exposes escape_string, is_pg_function, is_valid, quote_string (verified by dir() at spec time)
-from querysource.utils.vocabulary import keyword_example, build_vocabulary  # verified: vocabulary.py:154, :166
+from querysource.qs_parsers import _qs_parsers as rs     # exposes is_udf, is_pgconstant, is_pg_function, escape_string, quote_string, to_string, is_valid — verified: rust/src/lib.rs:44-51
+from querysource.utils.vocabulary import keyword_example, build_vocabulary, KEYWORD_REGISTRY, FUNCTION_REGISTRY, KeywordEntry  # verified: vocabulary.py:154, :166, :43, :88, :18
 ```
 
 ### Existing Class Signatures
@@ -462,6 +494,11 @@ cpdef object is_valid(object key, object value, str T = None, bint noquote = Fal
     # line 680: print(f'Valid Error on {key}:{value}, error: {ex}') # G5
 
 # querysource/utils/functions.pyx
+cpdef str fdom(object value = None, str mask = "%Y-%m-%d", str zone = None)   # line 133
+cpdef str fdow(object value=None, str mask="%Y-%m-%d", str zone=None)         # line 147
+cpdef str ldow(object value=None, str mask="%Y-%m-%d", str zone=None)         # line 150
+cpdef str ldom(object value = None, str mask = "%Y-%m-%d", str zone = None)   # line 183
+cpdef str ldopm(object value = None, str mask = "%Y-%m-%d", str zone = None)  # line 206
 from .validators import is_udf        # line 26 — the pure-Python dispatcher in utils/validators.py (executes, returns result or None)
 def to_udf(str value, *args, **kwargs)  # line 821 — globals()[f] (line 827/829), builtins fallback (line 832)
 
@@ -490,6 +527,8 @@ def _quote(text: str) -> str           # line 52 — "'" + text.replace("'", "''
 def _normalise_bound(key, bound)       # line 62 — is_udf(bound.upper()) guard before to_udf (line 77-78)
 
 # querysource/utils/vocabulary.py
+KEYWORD_REGISTRY: dict[str, KeywordEntry]   # line 43 — 7 rows TODAY…CURRENT_MONTH (last row "CURRENT_MONTH" at line 80)
+FUNCTION_REGISTRY: tuple[FunctionEntry, ...]  # line 88 — date_diff, date_sum, days_ago, previous_month, fdow (line 132), ldow (line 142); all invocable=False
 def keyword_example(name: str) -> Any  # line 154 — to_udf(name.strip()) inside try/except
 def build_vocabulary(udf_list, pg_constants, pg_udfs) -> dict  # line 166 — keywords follow udf_list order
 
@@ -525,7 +564,8 @@ pub fn is_valid(key, value, type_hint, noquote) -> String  // line 269 — `if i
 ### Does NOT Exist (Anti-Hallucination)
 - ~~`querysource.utils.udf_list`~~ — does not exist yet (M2 creates it).
 - ~~`unquote_literal`~~ — exists in neither engine (M3 creates it); `bq_quote_string` (`bigquery.pyx:40`, `validators.rs`) inlines the equivalent logic.
-- ~~`PG_UDF` in `rust/src/validators.rs`~~ — only `UDF_LIST` and `PG_CONSTANTS` statics exist; Rust has no env override for any of them.
+- ~~`PG_UDF` in `rust/src/validators.rs`~~ — only `UDF_LIST` and `PG_CONSTANTS` statics exist; Rust has no env override for any of them and no `env_list` helper (M1 creates both; `std::env::var` is not used anywhere in `rust/src/` today).
+- ~~`KEYWORD_REGISTRY["FDOW"]` / `["LDOW"]` / `["LDOPM"]`~~ — `fdow`/`ldow` are `FunctionEntry` rows today (`vocabulary.py:132,142`); `ldopm` appears nowhere in `vocabulary.py`.
 - ~~`querysource.types.validators.get_config_var` as a Python-visible name~~ — it is `cdef` (module-private); nothing outside `validators.pyx` references it.
 - ~~`querysource.utils.getfunc.getFunction` on the SQL path~~ — `is_valid` never calls it; FEAT-166's allowlist does not cover `to_udf`.
 - ~~`Entity.unquote`/`Entity.pg_literal`~~ — `pg_literal` is a function in `pgsql.pyx`/`pgsql_parser.rs` (ILIKE branch only), not an `Entity` method.
@@ -552,13 +592,18 @@ Verified against: `82214b25` (dev; `8f9339b2` adds only the id ledger).
 | `querysource/utils/udf_list.py` | CREATE | — | — | — |
 | `querysource/parsers/filter_values.py` | MODIFY (add after) | `def _quote(text: str) -> str:` | `filter_values.py:52` | 1 |
 | `rust/src/validators.rs` | MODIFY | `static UDF_LIST: Lazy<Vec<&str>> = Lazy::new(\|\| {` | `validators.rs:21` | 1 |
+| `rust/src/validators.rs` | MODIFY | `static PG_CONSTANTS: Lazy<Vec<&str>> =` | `validators.rs:34` | 1 |
 | `rust/src/validators.rs` | MODIFY | `pub fn is_pg_function(value: &str) -> bool {` | `validators.rs:92` | 1 |
 | `rust/src/validators.rs` | MODIFY | `pub fn quote_string(value: &str, no_dblquoting: bool) -> String {` | `validators.rs:164` | 1 |
 | `rust/src/validators.rs` | MODIFY | `    if is_pg_function(value) {` (inside `pub fn is_valid`, after the `is_pgconstant` block) | `validators.rs:335` | 1 |
 | `rust/src/pgsql_parser.rs` | MODIFY | `quote_string(&escape_string(` — ambiguous; sites: `:499` (comparison-dict map), `:520` (`let safe_v = ...` COMPARISON_TOKENS), `:581` (negated list), `:589-590` (`let v0 = escape_string(`/`let v1 = escape_string(` BETWEEN), `:602` (IN list map), `:667` (`format!("{} != {}"`), `:674` (`&value[1..]`) | `pgsql_parser.rs` | 7 |
 | `rust/src/sql_parser.rs` | MODIFY | `quote_string(&escape_string(` — ambiguous; sites: `:64` (`_ => quote_string(&escape_string(value), true),`), `:332` (IN list map), `:368` (`&s_str`), `:398` (`!=`), `:402` (`&value[1..]`), `:405` (`{key}=`) | `sql_parser.rs` | 6 |
 | `docs/QUERYSOURCE_DIALECT.md` | MODIFY | `### 13.1 Value functions (date keywords)` | `QUERYSOURCE_DIALECT.md:696` | 1 |
+| `docs/QUERYSOURCE_DIALECT.md` | MODIFY (add rows after) | `\| \`LDOM\` \| last day of the current month (\`YYYY-MM-DD\`) \|` | `QUERYSOURCE_DIALECT.md:711` | 1 |
 | `docs/QUERYSOURCE_DIALECT.md` | MODIFY | `### 13.2 Database constants and functions` | `QUERYSOURCE_DIALECT.md:732` | 1 |
+| `querysource/utils/vocabulary.py` | MODIFY (add rows after block) | `    "CURRENT_MONTH": KeywordEntry(` | `vocabulary.py:80` | 1 |
+| `querysource/utils/vocabulary.py` | MODIFY (delete blocks) | `        name="fdow",` and `        name="ldow",` | `vocabulary.py:132`, `:142` | 1 each |
+| `tests/unit/test_vocabulary.py` | MODIFY | `    assert len(FUNCTION_REGISTRY) == 6` | `test_vocabulary.py:51` | 1 |
 | `tests/unit/test_where_value_hardening.py` | CREATE | — | — | — |
 | `tests/unit/test_cython_filter_fallback.py` | MODIFY (stub only) | `from querysource.types.validators import Entity as _Entity` | `test_cython_filter_fallback.py:44` | 1 |
 
@@ -595,14 +640,17 @@ Verified against: `82214b25` (dev; `8f9339b2` adds only the id ledger).
 
 ### Known Risks / Gotchas
 - **Documented behaviour change** (gap 2): `QUERYSOURCE_DIALECT.md` §13.1
-  currently promises `fdow`/`ldow`/`ldopm` by name. After M2 they resolve
-  only if added to `UDF_LIST` (env). Mitigation: docs rewrite in M4 and §8 Q1.
-  Deployments that relied on it can set `UDF_LIST=...,FDOW,LDOW,LDOPM`.
+  promises `fdow`/`ldow`/`ldopm` by name; they stay available because they
+  join the default `UDF_LIST` (§8 Q1). Any *other* helper (`midnight`,
+  `now`, `days_ago`, …) stops resolving. The only extension mechanism is
+  `UDF_LIST=...,NAME` per deployment (a zero-argument helper of
+  `functions.pyx`), documented in §13.1 by M4.
 - **Config-var substitution** (gap 1) may be silently relied upon by some
   slug (e.g. a filter whose value is a config key name on purpose).
   No in-repo consumer exists (`grep -rn get_config_var` → only
-  `validators.pyx`). Mitigation: §8 Q2; removal is unconditional (no flag),
-  because a flag would keep the secret-oracle primitive alive.
+  `validators.pyx`). Resolved in §8 Q2 (no consumer); removal is
+  unconditional (no flag), because a flag would keep the secret-oracle
+  primitive alive.
 - **Ambiguity of user values that look pre-quoted**: a literal request value
   `'abc'` (with its own quotes) is unwrapped to `abc` by the idempotent
   quoter. This is today's behaviour too (strip-then-requote), so it is not a
@@ -610,10 +658,12 @@ Verified against: `82214b25` (dev; `8f9339b2` adds only the id ledger).
 - **`escape_string` still exists** and is still used by the `literal` type
   hint (`validators.pyx:641`, `validators.rs` `"literal"` arm) and by
   `filter_common.rs:201`. Out of scope; do not delete it.
-- **Rust `UDF_LIST` is static** (`validators.rs:21`): a `UDF_LIST` env
-  override is Python-only today (`tests/unit/test_udf_keyword_resolution.py:90`
-  covers only the Cython side). M1 adds a static `PG_UDF` with the same
-  limitation; parity under env override remains an existing gap, not a new one.
+- **Rust statics are initialised once** (`once_cell::Lazy`): after M1 the
+  env override is read at first use of the extension, exactly as
+  `validators.pyx` reads it at import. A test that needs a different list
+  must spawn a fresh interpreter (`tests/unit/test_udf_keyword_resolution.py:90`
+  pattern). Changing `UDF_LIST` at runtime after import stays unsupported on
+  both paths (unchanged).
 - **`tests/unit/test_cython_filter_fallback.py`** carries a pure-Python
   `Entity` stub used only when the extension cannot be imported; keep it in
   sync or its simulation diverges from the compiled behaviour.
@@ -641,20 +691,21 @@ Verified against: `82214b25` (dev; `8f9339b2` adds only the id ledger).
 
 - [x] Feature or hotfix flow? — *Resolved at spec time*: `feature` on `dev`,
   like FEAT-166 (no Jira key; multi-file change across Cython and Rust).
-- [ ] Q1 — Should the default `UDF_LIST` gain `FDOW`, `LDOW`, `LDOPM` (the
+- [x] Q1 — Should the default `UDF_LIST` gain `FDOW`, `LDOW`, `LDOPM` (the
   helpers §13.1 currently advertises), with matching `KeywordEntry` rows in
-  `vocabulary.py` and the Rust static? Spec assumes **no** (strict default,
-  env override as the escape hatch). — *Owner: Jesus Lara*
-- [ ] Q2 — Is any deployed slug relying on config-variable substitution in a
-  filter value? Spec assumes **no** and removes it without a feature flag. —
-  *Owner: Jesus Lara*
-- [ ] Q3 — Should a value containing `(` be *rejected* (`ParserError`) rather
-  than quoted as a literal? Spec assumes **quote as literal** (consistent with
-  §13.2's "rendered as quoted literals"); rejecting would break legitimate
-  text such as `Acme (US)`. — *Owner: Jesus Lara*
-- [ ] Q4 — Open a ledger issue for the Rust-side env-override gap
+  `vocabulary.py` and the Rust static? — *Resolved by Jesus Lara
+  (2026-10-12)*: **yes, incorporate them** — default list in Cython
+  (`udf_list.py`), Rust (`validators.rs`) and `KEYWORD_REGISTRY` (M1/M2, AC2).
+- [x] Q2 — Is any deployed slug relying on config-variable substitution in a
+  filter value? — *Resolved by Jesus Lara (2026-10-12)*: **no** — removed
+  without a feature flag (M1, AC1).
+- [x] Q3 — Should a value containing `(` be *rejected* (`ParserError`) rather
+  than quoted as a literal? — *Resolved by Jesus Lara (2026-10-12)*: **quote
+  it as a literal** (M1, AC3; `Acme (US)` keeps working).
+- [x] Q4 — Open a ledger issue for the Rust-side env-override gap
   (`UDF_LIST`/`PG_UDF` static in `validators.rs`) rather than fixing it here?
-  Spec assumes **yes, separate issue**. — *Owner: Jesus Lara*
+  — *Resolved by Jesus Lara (2026-10-12)*: **fix it in this feature** — the
+  three Rust statics become env-aware (M1, G7, AC11).
 
 ---
 
@@ -689,6 +740,7 @@ Summary: **0** confirmed · **0** rejected · **0** escalated.
   - M4 → M1, M2, M3 (tests assert the combined behaviour; docs describe it).
 - **Shared files**: `querysource/types/validators.pyx` (M1, M2, M3) and
   `rust/src/validators.rs` (M1, M3) — their tasks are serialized.
+  `vocabulary.py` and `tests/unit/test_vocabulary.py` are M2-only.
 - **Exclusive resources**: Cython rebuild (`build_ext --inplace`) and Rust
   rebuild + stage (`make build-rust && make stage-rust`) mutate shared
   artefacts → tasks that rebuild are `parallel: false`.
@@ -702,3 +754,4 @@ Summary: **0** confirmed · **0** rejected · **0** escalated.
 | Version | Date | Author | Change |
 |---|---|---|---|
 | 0.1 | 2026-10-12 | Jesus Lara (with Claude Code) | Initial draft from in-session verification of FEAT-166 residual gaps and the double-quoting defect |
+| 0.2 | 2026-10-12 | Jesus Lara (with Claude Code) | §8 Q1–Q4 resolved: FDOW/LDOW/LDOPM join the default keyword list (vocabulary promoted), config substitution removed unconditionally, `(` values quoted, Rust allowlists env-aware (G7, AC11) |
