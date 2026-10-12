@@ -299,8 +299,8 @@ When you pick up this task:
 
 *(Agent fills this in when done)*
 
-**Completed by**: <session or agent ID>
-**Date**: YYYY-MM-DD
-**Notes**:
+**Completed by**: Claude Code (interactive /sdd-start, Jesus Lara)
+**Date**: 2026-10-12
+**Notes**: Created `querysource/types/dt/regex.py` (`check_regex_safety`, `re2_search`, `MAX_REGEX_PATTERN_LENGTH`) as a port of `qsurl/residual.py:40-85` raising `QueryException`; `check_regex_safety` additionally rejects non-string patterns. 8 tests in `tests/test_dt_regex.py` (anchoring, nulls, non-string cells, ignore_case, lookaround/backreference rejection, caps, fail-closed without pyarrow, source guard).
 
 **Deviations from spec**: none
