@@ -247,3 +247,33 @@ class TestOutputFailurePropagation:
                 "/api/v3/queries", json=_body([{"TableOutput": {}}])
             )
         assert resp.status == 200
+
+
+class TestEmptyResultIsNoData:
+    """A pipeline step that drops every row is an empty result (204), not an error."""
+
+    @pytest.mark.asyncio
+    async def test_filter_dropping_every_row_returns_204(self, mq_client):
+        payload = {
+            "queries": {"q": {"slug": "s"}},
+            "Filter": {"conditions": [{"column": "a", "expression": ">", "value": 100}]},
+        }
+        with _patch_definition_repository(), patch.object(
+            multiqs_module, "ThreadQuery", _FakeThread
+        ):
+            resp = await mq_client.post("/api/v3/queries", json=payload)
+        assert resp.status == 204
+        assert "No Data was Found after Filtering" in resp.headers.get("X-Error", "")
+
+    @pytest.mark.asyncio
+    async def test_groupby_after_empty_filter_still_returns_204(self, mq_client):
+        payload = {
+            "queries": {"q": {"slug": "s"}},
+            "Filter": {"conditions": [{"column": "a", "expression": "<", "value": 0}]},
+            "GroupBy": {"by": ["a"], "columns": {"a": "count"}},
+        }
+        with _patch_definition_repository(), patch.object(
+            multiqs_module, "ThreadQuery", _FakeThread
+        ):
+            resp = await mq_client.post("/api/v3/queries", json=payload)
+        assert resp.status == 204
