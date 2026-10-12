@@ -11,7 +11,7 @@ tags: [parsers, validators, is-valid, sql-injection, quoting, security, rust]
 **Feature ID**: FEAT-167
 **Date**: 2026-10-12
 **Author**: Jesus Lara (spec drafted with Claude Code)
-**Status**: draft
+**Status**: approved
 **Target version**: 5.2.5
 
 ---
