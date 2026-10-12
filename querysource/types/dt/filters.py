@@ -18,7 +18,7 @@ import pandas as pd
 from navconfig.logging import logging
 
 from ...exceptions import QueryException
-from .regex import check_regex_safety, re2_search
+from .regex import check_regex_safety, re2_find, re2_search
 
 valid_operators = ['+', '-', '*', '/', '%', '==', '!=', '>', '<', '>=', '<=', '/', '//']
 
@@ -40,6 +40,16 @@ def _text(series: pd.Series) -> pd.Series:
 def _bool(mask: pd.Series) -> pd.Series:
     """Normalise a (possibly nullable) boolean mask: ``NA`` never selects a row."""
     return mask.fillna(False).astype(bool)
+
+
+def _compare(expression: str, left: pd.Series, right) -> pd.Series:
+    """Apply a comparison operator, turning pandas type errors into ``QueryException``."""
+    try:
+        return _COMPARISONS[expression](left, right)
+    except TypeError as err:
+        raise QueryException(
+            f"Filter: cannot compare column '{left.name}' with {right!r}: {err}"
+        ) from err
 
 
 def _regex_pattern(expression: str, value: str) -> str:
@@ -66,7 +76,7 @@ def _str_condition(expression: str, col: pd.Series, value: str) -> pd.Series:
         mask = text.str.endswith(value, na=False)
         return ~mask if expression == 'not_endswith' else mask
     if expression in _COMPARISONS:
-        return _COMPARISONS[expression](col, value)
+        return _compare(expression, col, value)
     raise QueryException(f"Invalid expression: {expression}")
 
 
@@ -86,7 +96,7 @@ def _list_condition(expression: str, col: pd.Series, value: list) -> pd.Series:
         return ~mask if expression == 'not_contains' else mask
     if expression in ('regex', 'not_regex'):
         for item in value:
-            check_regex_safety(item)
+            check_regex_safety(item)  # includes the RE2 compile check per item
         mask = re2_search(col, "|".join(f"(?:{item})" for item in value))
         return ~mask if expression == 'not_regex' else mask
     if expression == 'fullmatch':
@@ -96,10 +106,18 @@ def _list_condition(expression: str, col: pd.Series, value: list) -> pd.Series:
         return col.isin(value)
     if expression == '!=':
         return ~col.isin(value)
-    if expression in ('>', '>='):
-        return _COMPARISONS[expression](col, min(value))
-    if expression in ('<', '<='):
-        return _COMPARISONS[expression](col, max(value))
+    if expression in ('>', '>=', '<', '<='):
+        if not value:
+            raise QueryException(
+                f"Filter: expression '{expression}' needs a non-empty list"
+            )
+        try:
+            bound = min(value) if expression in ('>', '>=') else max(value)
+        except TypeError as err:
+            raise QueryException(
+                f"Filter: list values for '{expression}' must be mutually comparable: {err}"
+            ) from err
+        return _compare(expression, col, bound)
     raise QueryException(f"tFilter: Invalid expression: {expression}")
 
 
@@ -124,10 +142,16 @@ def build_condition(expression: str, column: str, value, condition: dict, df: pd
             reference missing from ``df``, non-numeric ``gt``/``lt`` value,
             unsafe or invalid regex.
     """
+    if not isinstance(expression, str):
+        raise QueryException(
+            f"Filter: expression must be a string, got {type(expression).__name__}"
+        )
+    if column not in df.columns:
+        raise QueryException(f"tFilter: Column {column} not found in DataFrame.")
     col = df[column]
     if isinstance(value, dict) and "$column" in value:
         ref_column = value["$column"]
-        if ref_column not in df.columns:
+        if not isinstance(ref_column, str) or ref_column not in df.columns:
             raise QueryException(
                 f"Referenced column '{ref_column}' not found in DataFrame."
             )
@@ -136,7 +160,7 @@ def build_condition(expression: str, column: str, value, condition: dict, df: pd
                 f"Invalid expression '{expression}' for column reference on "
                 f"'{column}'. Allowed: {sorted(comparison_operators)}"
             )
-        return _bool(_COMPARISONS[expression](col, df[ref_column]))
+        return _bool(_compare(expression, col, df[ref_column]))
     if expression in ("gt", "lt"):
         if not isinstance(value, (int, float)):
             raise QueryException(
@@ -150,6 +174,11 @@ def build_condition(expression: str, column: str, value, condition: dict, df: pd
         return ~_bool(col.isnull() | (col == ''))
     if expression == "is_empty":
         return _bool(col == '')
+    if value is None:
+        raise QueryException(
+            f"Filter: expression '{expression}' on column '{column}' requires a value "
+            "(use is_null / not_null / is_empty to test for missing data)"
+        )
     if isinstance(value, (int, float, Decimal)):
         if expression not in comparison_operators:
             raise QueryException(
@@ -157,7 +186,7 @@ def build_condition(expression: str, column: str, value, condition: dict, df: pd
                 f"'{column}'. Allowed: {sorted(comparison_operators)}"
             )
         right = float(value) if isinstance(value, Decimal) else value
-        return _bool(_COMPARISONS[expression](col, right))
+        return _bool(_compare(expression, col, right))
     if isinstance(value, str):
         return _bool(_str_condition(expression, col, value))
     if isinstance(value, (np.datetime64, np.timedelta64, datetime.date)):
@@ -168,7 +197,7 @@ def build_condition(expression: str, column: str, value, condition: dict, df: pd
                 f"'{column}'. Allowed: {sorted(comparison_operators)}"
             )
         right = pd.Timestamp(value) if isinstance(value, datetime.date) else value
-        return _bool(_COMPARISONS[expression](col, right))
+        return _bool(_compare(expression, col, right))
     if isinstance(value, list):
         return _bool(_list_condition(expression, col, value))
     raise QueryException(f"Invalid expression: {expression}")
@@ -236,8 +265,12 @@ def create_filter(_filter: list, df: pd.DataFrame) -> list[pd.Series]:
     """
     conditions: list[pd.Series] = []
     for condition in _filter:
+        if not isinstance(condition, dict):
+            raise QueryException(
+                f"Filter: each condition must be an object, got {type(condition).__name__}"
+            )
         column = condition.get('column')
-        if not column:
+        if not column or not isinstance(column, str):
             raise QueryException(
                 "Column name is required for filtering."
             )
@@ -345,22 +378,21 @@ def suppress(df: pd.DataFrame, columns: Optional[list] = None, **kwargs):
     :return: The DataFrame with suppressed string values.
     """
     pattern = kwargs.get('pattern', None)
-
-    def clean_chars(field):
-        name = str(field)
+    if not (columns and isinstance(columns, list)):
+        return df
+    if pattern:
+        # Request-controlled pattern: screen it and search with RE2 only (FEAT-166).
+        check_regex_safety(pattern)
+    for column in columns:
+        names = df[column].astype(str)
         if not pattern:
-            return name
-        if re.search(pattern, name):
-            pos = re.search(pattern, name).start()
-            # return str(name)[:pos]
-            return name[:pos]
-        else:
-            return name
-
-    if columns and isinstance(columns, list):
-        for column in columns:
-            df[column] = df[column].astype(str)
-            df[column] = df[column].apply(clean_chars)
+            df[column] = names
+            continue
+        positions = re2_find(names, pattern)
+        df[column] = [
+            name[:pos] if pos >= 0 else name
+            for name, pos in zip(names, positions, strict=True)
+        ]
     return df
 
 

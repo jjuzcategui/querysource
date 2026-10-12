@@ -35,3 +35,35 @@ def test_getfunc_module_has_no_dynamic_import_machinery():
 
     for forbidden in ("importlib", "builtins", "contextlib"):
         assert not hasattr(mod, forbidden), forbidden
+
+
+@pytest.mark.parametrize("name", ["Path", "PurePath", "UUID", "ZoneInfo", "relativedelta", "urlparse", "Number", "is_udf"])
+def test_reexported_names_are_not_resolvable(name):
+    assert callable(getattr(qsfunctions, name))  # they exist on the module...
+    assert getFunction(name) is None             # ...but are not QuerySource helpers
+
+
+@pytest.mark.parametrize("name", ["uri_exists", "to_udf"])
+def test_denied_module_functions_are_not_resolvable(name):
+    assert getFunction(name) is None
+
+
+def test_map_only_calls_catalogued_transform_functions():
+    import asyncio
+
+    import pandas as pd
+
+    from querysource.queries.multi.transformations.Map import Map
+
+    names = Map.transform_functions()
+    assert "getFunction" not in names and "apply_function" in names
+    df = pd.DataFrame({"a": [1, 2]})
+    # a module attribute that is NOT a transform function must not be called with df=/field=
+    op = Map(data=df.copy(), fields={"a": [["getFunction", {}]]})
+
+    async def run():
+        async with op as o:
+            return await o.run()
+
+    out = asyncio.run(run())
+    assert list(out["a"]) == [1, 2]

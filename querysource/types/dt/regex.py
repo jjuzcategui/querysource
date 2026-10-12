@@ -45,6 +45,26 @@ def check_regex_safety(pattern: str) -> None:
         raise QueryException(
             f"regex pattern `{pattern}` has a nested quantifier that risks catastrophic backtracking"
         )
+    re2_validate(pattern)
+
+
+def re2_validate(pattern: str) -> None:
+    """Compile ``pattern`` standalone under RE2 so callers may embed it in a group.
+
+    A pattern that only compiles once wrapped (for example ``zzz)|(abc``, which
+    closes the caller's ``^(?:`` … ``)$`` anchoring group) is rejected here.
+    Skipped when pyarrow is unavailable: ``re2_search`` then fails closed.
+
+    Raises:
+        QueryException: ``"invalid regex `<pattern>`: <arrow error>"``.
+    """
+    if pc is None:
+        return
+    try:
+        # A one-element array: the kernel does not compile the pattern on empty input.
+        pc.match_substring_regex(pa.array([""], pa.string()), pattern=pattern)
+    except pa.ArrowInvalid as err:
+        raise QueryException(f"invalid regex `{pattern}`: {err}") from err
 
 
 def re2_search(col: pd.Series, pattern: str, *, ignore_case: bool = False) -> pd.Series:
@@ -77,4 +97,33 @@ def re2_search(col: pd.Series, pattern: str, *, ignore_case: bool = False) -> pd
         matched.fill_null(False).to_numpy(zero_copy_only=False),
         index=col.index,
         dtype=bool,
+    )
+
+
+def re2_find(col: pd.Series, pattern: str) -> pd.Series:
+    """Position of the first RE2 match of ``pattern`` in each cell (``-1`` when none).
+
+    Args:
+        col: column to scan; values are matched on their string form.
+        pattern: user-supplied regex (RE2 syntax), already screened by ``check_regex_safety``.
+
+    Returns:
+        ``pd.Series`` of ``int64`` aligned to ``col.index``; nulls and non-matches are ``-1``.
+
+    Raises:
+        QueryException: pyarrow missing or RE2 rejecting the pattern.
+    """
+    if pc is None:
+        raise QueryException(
+            "regex filters require pyarrow (RE2 engine), which is not installed"
+        )
+    arrow = pa.array(col.astype(pd.StringDtype("pyarrow")))
+    try:
+        found = pc.find_substring_regex(arrow, pattern=pattern)
+    except pa.ArrowInvalid as err:
+        raise QueryException(f"invalid regex `{pattern}`: {err}") from err
+    return pd.Series(
+        found.fill_null(-1).to_numpy(zero_copy_only=False),
+        index=col.index,
+        dtype="int64",
     )

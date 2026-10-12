@@ -96,9 +96,15 @@ interpreted as code or as a Python expression. `regex`, `not_regex` and
 `fullmatch` run on RE2 through `pyarrow.compute` (linear time): patterns longer
 than 200 characters, patterns with nested quantifiers, lookaround or
 backreferences are rejected, and when `pyarrow` is not installed these three
-expressions raise an error instead of falling back to Python's `re`. The
-`func`/`function` expressions were removed; `filter_conditions` keys must be one
-of `Filter.filter_functions()`.
+expressions raise an error instead of falling back to Python's `re`. A pattern
+must also compile on its own (an unbalanced `)` is rejected rather than closing
+the anchoring group). Scalar `contains` / `not_contains` now match the value as
+**literal text** (case-insensitive); before FEAT-166 the value was interpreted
+as a regular expression. The `func`/`function` expressions were removed;
+`filter_conditions` keys must be one of `Filter.filter_functions()`, and the
+`suppress` function's `pattern` runs on RE2 as well. Function names in `Map`
+fields and `apply_function` resolve only to functions defined by
+`querysource.utils.functions` (`uri_exists` and `to_udf` excluded).
 
 ## qsurl
 

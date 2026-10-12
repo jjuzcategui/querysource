@@ -336,3 +336,66 @@ def test_join_conditions_no_eval():
     )
     with pytest.raises(QueryException):
         asyncio.run(_run(bad))
+
+
+# --------------------------------------------------------------------------- #
+# Review fixes (FEAT-166 adversarial review)
+# --------------------------------------------------------------------------- #
+def test_suppress_pattern_runs_on_re2(text_df):
+    from querysource.types.dt.filters import suppress
+
+    df = pd.DataFrame({"s": ["abc-123", "no-dash", None, "a" * 28 + "!"]})
+    out = suppress(df.copy(), columns=["s"], pattern="-")
+    assert list(out["s"].iloc[[0, 1, 3]]) == ["abc", "no", "a" * 28 + "!"]
+    assert pd.isna(out["s"].iloc[2])
+    with pytest.raises(QueryException, match="nested quantifier"):
+        suppress(df.copy(), columns=["s"], pattern="(a+)+$")
+    with pytest.raises(QueryException, match="invalid regex"):
+        suppress(df.copy(), columns=["s"], pattern="(?=a)(a|a)+$")
+    # through the operator path as well
+    op = Filter(data=df.copy(), filter_conditions={"suppress": {"columns": ["s"], "pattern": "(a+)+$"}})
+    with pytest.raises(QueryException, match="nested quantifier"):
+        asyncio.run(_run(op))
+
+
+def test_fullmatch_cannot_escape_anchoring_group(text_df):
+    with pytest.raises(QueryException, match="invalid regex"):
+        build_condition("fullmatch", "name", "zzz)|(abc", {}, text_df)
+    with pytest.raises(QueryException, match="invalid regex"):
+        build_condition("regex", "name", ["ok", "zzz)|(abc"], {}, text_df)
+    assert _ids(text_df, build_condition("fullmatch", "name", "alice|x.*y", {}, text_df)) == [1, 4]
+
+
+@pytest.mark.parametrize("expression,value", [
+    ({"==": 1}, "alice"),
+    (["=="], "alice"),
+    ("==", {"$column": ["status"]}),
+])
+def test_malformed_expression_shapes_raise_query_exception(text_df, expression, value):
+    with pytest.raises(QueryException):
+        build_condition(expression, "name", value, {}, text_df)
+
+
+def test_malformed_specs_raise_query_exception(text_df):
+    with pytest.raises(QueryException, match="must be an object"):
+        create_filter(["name == alice"], text_df)
+    with pytest.raises(QueryException, match="required"):
+        create_filter([{"column": ["name"], "expression": "==", "value": 1}], text_df)
+    with pytest.raises(QueryException, match="not found"):
+        build_condition("==", "nope", 1, {}, text_df)
+    with pytest.raises(QueryException, match="non-empty list"):
+        build_condition(">", "amount", [], {}, text_df)
+    with pytest.raises(QueryException, match="mutually comparable"):
+        build_condition(">", "amount", [1, "a"], {}, text_df)
+    with pytest.raises(QueryException, match="requires a value"):
+        build_condition("==", "name", None, {}, text_df)
+    with pytest.raises(QueryException, match="cannot compare"):
+        build_condition(">", "amount", "ten", {}, text_df)
+
+
+def test_filter_functions_allowlist_is_module_owned():
+    names = Filter.filter_functions()
+    for forbidden in ("getFunction", "combine_conditions", "create_filter", "build_condition",
+                      "create_filter_chain", "re2_search", "check_regex_safety", "re2_find"):
+        assert forbidden not in names, forbidden
+    assert {"drop_rows", "drop_na", "suppress", "fill_na"} <= set(names)

@@ -54,12 +54,14 @@ class Filter(AbstractOperator):
         """
         import inspect
         _builders = {
-            'getFunction', 'build_condition', 'create_filter_chain', 'create_filter'
+            'build_condition', 'create_filter_chain', 'create_filter',
+            'combine_conditions',
         }
         return [
             name for name, obj in vars(dffunctions).items()
             if inspect.isfunction(obj)
             and not name.startswith('_')
+            and obj.__module__ == dffunctions.__name__
             and name not in _builders
         ]
 
