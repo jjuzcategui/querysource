@@ -54,7 +54,7 @@
       "feature_id": "FEAT-166",
       "feature": "filter-eval-hardening",
       "spec": "sdd/specs/filter-eval-hardening.spec.md",
-      "status": "in-progress",
+      "status": "done",
       "priority": "high",
       "effort": "L",
       "depends_on": [
@@ -64,8 +64,9 @@
       "parallelism_notes": "Imports re2_search and check_regex_safety from TASK-867 (querysource/types/dt/regex.py). Creates tests/test_filter_eval_hardening.py that TASK-870 appends to.",
       "assigned_to": null,
       "started_at": "2026-10-12T02:36:13+00:00",
-      "completed_at": null,
-      "file": "sdd/tasks/active/TASK-869-filters-mask-builder.md"
+      "completed_at": "2026-10-12T02:39:19+00:00",
+      "file": "sdd/tasks/completed/TASK-869-filters-mask-builder.md",
+      "verification": "verified"
     },
     {
       "id": "TASK-870",
@@ -74,7 +75,7 @@
       "feature_id": "FEAT-166",
       "feature": "filter-eval-hardening",
       "spec": "sdd/specs/filter-eval-hardening.spec.md",
-      "status": "pending",
+      "status": "in-progress",
       "priority": "high",
       "effort": "M",
       "depends_on": [
@@ -83,7 +84,7 @@
       "parallel": true,
       "parallelism_notes": "Imports combine_conditions from TASK-869 (querysource/types/dt/filters.py) and relies on create_filter returning masks; appends to tests/test_filter_eval_hardening.py created by TASK-869.",
       "assigned_to": null,
-      "started_at": null,
+      "started_at": "2026-10-12T02:39:21+00:00",
       "completed_at": null,
       "file": "sdd/tasks/active/TASK-870-filter-join-operators-no-eval.md"
     },
