@@ -1,6 +1,6 @@
 {
   "next_task_id": 872,
-  "next_feature_id": 167,
-  "updated_at": "2026-10-12T02:27:49+00:00",
-  "updated_by": "filter-eval-hardening"
+  "next_feature_id": 168,
+  "updated_at": "2026-10-12T21:10:24+00:00",
+  "updated_by": "where-value-hardening"
 }
