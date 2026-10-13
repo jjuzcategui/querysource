@@ -153,39 +153,40 @@ cdef str parseString(str value):
         return value
 
 cdef str quoteString(object value):
+    """Module-level literal quoting used by ``is_valid``.
+
+    Same contract as ``Entity.quoteString`` (FEAT-167 G4): a well-formed
+    pre-quoted literal is unwrapped once, anything else is re-escaped from
+    scratch; a double-quoted value is converted first. Never returns text that
+    can carry an unescaped single quote.
+    """
     v = value if value != 'None' else ""
     if value == 'null' or value == 'NULL':
-            return v
+        return v
     if isinstance(v, int):
         # quoting to string:
         return "'{}'".format(v)
     elif isinstance(v, str):
-        start_quote = v.startswith("'")
-        end_quote = v.endswith("'")
-
-        # Slice the string if it starts/ends with a quote
-        inner = v[1:-1] if start_quote and end_quote else (v[1:] if start_quote else (v[:-1] if end_quote else v))
-        # Escape single quotes
-        inner = inner.replace("'", "''")
-
-        if start_quote: # was already quoted
-            return "'{}'".format(inner)
-        elif v.startswith('"'): # is double quoted
-            return v.replace('"', "'")
-        else:
-            # Ledger issue:48c9b3050a0c (code review, FEAT-152): this used to
-            # return `v` (the raw, unescaped value) instead of `inner` (the
-            # same value with every embedded single quote doubled, already
-            # computed above) — a plain string containing a `'` was wrapped
-            # without escaping it, producing an unterminated/broken SQL
-            # string literal. Callers that pre-quote a value before their own
-            # dedicated escaper runs (e.g. querysource/parsers/pgsql.pyx's
-            # PG_TEXT_OPERATORS branch, rust/src/pgsql_parser.rs) strip this
-            # wrapper and then undo `''`-doubling before re-escaping, so they
-            # tolerate this fix; see the "PINNED INVARIANT" comments there.
-            return "'{}'".format(inner)
+        if v.startswith('"'):
+            v = v.replace('"', "'")
+        inner = unquote_literal(v)
+        if inner is None:
+            inner = v
+        return "'{}'".format(inner.replace("'", "''"))
     else:
         return v
+
+cpdef object quote_sql_literal(object value):
+    """``Entity.quoteString`` for dialects where a backslash is an escape character.
+
+    Generic ``sql`` builder / MySQL (without ``NO_BACKSLASH_ESCAPES``): every
+    backslash in a quoted result is doubled so ``\\'`` cannot close the literal.
+    Postgres keeps ``Entity.quoteString`` (standard_conforming_strings).
+    """
+    quoted = Entity.quoteString(value)
+    if isinstance(quoted, str) and len(quoted) >= 2 and quoted[0] == "'" and quoted[-1] == "'":
+        return quoted.replace("\\", "\\\\")
+    return quoted
 
 cpdef object unquote_literal(object value):
     """Inner text of a well-formed pre-quoted SQL literal, or None.

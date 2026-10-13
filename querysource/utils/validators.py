@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import dateutil
 
@@ -9,7 +9,7 @@ def isdate(value):
     returned = False
     # can be a unix epoch?
     try:
-        b = datetime.fromtimestamp(int(value))
+        b = datetime.fromtimestamp(int(value), tz=timezone.utc)
         returned = bool(b)
     except Exception:
         pass
@@ -18,8 +18,7 @@ def isdate(value):
         returned = True
     except Exception:
         pass
-    finally:
-        return returned
+    return returned
 
 is_date = isdate
 

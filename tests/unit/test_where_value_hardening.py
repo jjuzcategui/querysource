@@ -78,8 +78,9 @@ async def test_apostrophe_roundtrip(sq_parser) -> None:  # AC4
         out = await where(sq_parser, {"name": {">": "O'Brien"}})
         assert "name > 'O''Brien'" in out
         neg = await where(sq_parser, {"name": "!O'Brien"})
-        assert "O''Brien'" in neg
+        assert "!= 'O''Brien'" in neg  # a real negation, not equality with "!O'Brien"
         assert "O''''Brien" not in neg
+        assert "'!" not in neg
 
 
 async def test_bigquery_renders() -> None:  # AC3/AC4 BigQuery
@@ -94,3 +95,55 @@ async def test_bigquery_renders() -> None:  # AC3/AC4 BigQuery
 def test_rust_cython_quote_parity(raw: str) -> None:  # AC4 both engines
     assert rs.quote_string(raw, True) == Entity.quoteString(raw)
     assert rs.quote_string(Entity.quoteString(raw), True) == Entity.quoteString(raw)
+
+
+@pytest.mark.parametrize("parser_cls", [pgSQLParser, SQLParser, CQLParser])
+async def test_negation_of_hostile_value_is_one_literal(parser_cls) -> None:
+    """`!` + anything (spaces, quotes, parens) stays a single quoted operand."""
+    out = await where(parser_cls, {"name": "!x' OR 1=1 --"})
+    assert "!= 'x'' OR 1=1 --'" in out
+
+
+async def test_generic_sql_doubles_backslash() -> None:  # MySQL-safe policy (sql builder)
+    out = await where(SQLParser, {"name": "\\' OR 1=1 -- "})
+    assert out == "name='\\\\'' OR 1=1 -- '"
+
+
+async def test_pgsql_keeps_backslash_literal() -> None:  # standard_conforming_strings
+    out = await where(pgSQLParser, {"name": "a\\b"})
+    assert out == "name='a\\b'"
+
+
+async def test_bigquery_backslash_cannot_close_literal() -> None:
+    out = await where(BigQueryParser, {"name": '\\" OR 1=1 --'})
+    assert out == 'name="\\\\\\" OR 1=1 --"'
+
+
+HOSTILE = [
+    "x' OR 1=1 --",
+    '"x\' OR 1=1 --"',
+    "\\' OR 1=1 -- ",
+    "'",
+    "''",
+    "'a'b'",
+    "it''s",
+    "50%",
+    "O'Brien",
+]
+
+
+@pytest.mark.parametrize("raw", HOSTILE)
+def test_is_valid_never_returns_unescaped_quote(raw: str) -> None:
+    """Cython is_valid output, when quoted, is a well-formed literal."""
+    from querysource.types.validators import is_valid, unquote_literal
+
+    out = is_valid("k", raw)
+    if isinstance(out, str) and out.startswith("'"):
+        assert unquote_literal(out) is not None, (raw, out)
+
+
+@pytest.mark.parametrize("raw", HOSTILE)
+def test_cython_rust_is_valid_parity(raw: str) -> None:
+    from querysource.types.validators import is_valid
+
+    assert rs.is_valid("k", raw, None, False) == is_valid("k", raw), raw

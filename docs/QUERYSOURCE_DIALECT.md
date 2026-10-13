@@ -754,6 +754,12 @@ that text, never substituted. Quoting is idempotent — a value already wrapped
 in single quotes with its inner quotes doubled (`'O''Brien'`) is unwrapped once
 and re-quoted, so `O'Brien` always reaches the database as `'O''Brien'`.
 
+**Negation and backslashes.** A leading `!` negates the rest of the text, whatever
+it contains: `!O'Brien` renders `name != 'O''Brien'`. Backslashes are dialect
+policy: the PostgreSQL parser keeps them literal (`standard_conforming_strings`),
+while the generic `sql` parser doubles them (`\'` → `'\\''`) so a backslash can
+never close the literal on MySQL; BigQuery escapes `\` before `"`.
+
 ### 13.3 `@variables`
 
 A value that starts with `@` calls a **deployment variable function**:

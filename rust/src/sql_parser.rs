@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::safe_dict::safe_format_map_rust;
 use crate::filter_common::{base_key, is_canonical_between};
 use crate::partial_match::{build_like_pattern, check_entries, like_escape_bang, sql_like_literal, MatchKind, PartialMatchOp};
-use crate::validators::{field_components, quote_string};
+use crate::validators::{field_components, quote_string_bs as quote_string};
 
 /// Comparison tokens recognized in filter conditions.
 const COMPARISON_TOKENS: &[&str] = &[">=", "<=", "<>", "!=", "<", ">"];

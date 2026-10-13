@@ -35,11 +35,13 @@ def test_rust_env_override_parity() -> None:
     env = os.environ.copy()
     env["UDF_LIST"] = "today, fdom"
     env["PG_UDF"] = "now(),my_fn()"
+    env["PG_CONSTANTS"] = "current_date, my_const"
     code = (
         "from querysource.qs_parsers import _qs_parsers as rs; "
         "from querysource.types.validators import udf_keywords, pg_udfs; "
         "print(rs.is_udf('FDOM'), rs.is_udf('LDOM'), rs.is_pg_function('my_fn()'), "
-        "rs.is_valid('x', 'my_fn()', None, False)); print(udf_keywords()); print(pg_udfs())"
+        "rs.is_valid('x', 'my_fn()', None, False)); print(udf_keywords()); print(pg_udfs()); "
+        "print(rs.is_pgconstant('my_const'), rs.is_pgconstant('CURRENT_TIMESTAMP'))"
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
@@ -49,6 +51,7 @@ def test_rust_env_override_parity() -> None:
         text=True,
         check=True,
     ).stdout.strip().splitlines()
-    assert out[-3] == "True False True my_fn()"
-    assert out[-2] == "['TODAY', 'FDOM']"
-    assert out[-1] == "['now()', 'my_fn()']"
+    assert out[-4] == "True False True my_fn()"
+    assert out[-3] == "['TODAY', 'FDOM']"
+    assert out[-2] == "['now()', 'my_fn()']"
+    assert out[-1] == "True False"  # PG_CONSTANTS env replaces the default list

@@ -33,7 +33,7 @@ fn env_list(name: &str, default: &[&str], upper: bool) -> Vec<String> {
     }
 }
 
-/// Default relative-date keywords — MUST equal the 10-name Python DEFAULT_UDF_LIST tuple owned by TASK-872.
+/// Default relative-date keywords — MUST equal `DEFAULT_UDF_LIST` in `querysource/utils/udf_list.py`.
 const DEFAULT_UDF_LIST: &[&str] = &[
     "CURRENT_YEAR", "CURRENT_MONTH", "TODAY", "YESTERDAY", "LAST_YEAR", "FDOM", "LDOM", "FDOW", "LDOW",
     "LDOPM",
@@ -221,6 +221,21 @@ pub fn quote_string(value: &str, no_dblquoting: bool) -> String {
     format!("'{escaped}'")
 }
 
+/// Quote a string value for dialects that treat `\\` as an escape character
+/// (MySQL without `NO_BACKSLASH_ESCAPES`, and the generic `sql` builder).
+///
+/// Same as [`quote_string`], but every backslash in the literal text is doubled
+/// after the idempotent unwrap, so `\\'` can never close the literal early.
+/// Postgres (standard_conforming_strings) must keep using [`quote_string`].
+pub fn quote_string_bs(value: &str, no_dblquoting: bool) -> String {
+    let quoted = quote_string(value, no_dblquoting);
+    if quoted.contains('\\') && quoted.starts_with('\'') && quoted.ends_with('\'') {
+        quoted.replace('\\', "\\\\")
+    } else {
+        quoted
+    }
+}
+
 /// Quote a string value for BigQuery using double-quote delimiters.
 ///
 /// BigQuery strings enclosed in double quotes do not require single-quote
@@ -241,7 +256,8 @@ pub fn bq_quote_string(value: &str) -> String {
     } else {
         value.to_string()
     };
-    let v = inner.replace('"', "\\\"");
+    // Backslash first: BigQuery treats `\\` as an escape inside both quote styles.
+    let v = inner.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{}\"", v)
 }
 
@@ -275,7 +291,7 @@ pub fn to_unquoted(value: &str) -> String {
 /// persist `cond_definition` hints in upper case, e.g. `"STRING"`):
 /// - `literal` → escape_string
 /// - `integer`/`int`/`float`/`numeric`/`decimal` → unquoted
-/// - `string`/`varchar`/`field` → quote_string(escape_string(v))
+/// - `string`/`varchar`/`field` → quote_string(v)
 /// - `boolean` → TRUE/FALSE
 /// - `date`/`datetime`/`timestamp` → quote_string
 /// - `uuid` → quote_string
@@ -550,6 +566,21 @@ mod tests {
         assert_eq!(bq_quote_string("'BBY102'"), "\"BBY102\"");
         // PG-style '' escaping is undone when unwrapping.
         assert_eq!(bq_quote_string("'Sam''s Club'"), "\"Sam's Club\"");
+    }
+
+    #[test]
+    fn test_quote_string_bs_doubles_backslash() {
+        assert_eq!(quote_string_bs("\\' OR 1=1 -- ", true), "'\\\\'' OR 1=1 -- '");
+        assert_eq!(quote_string_bs("a\\b", true), "'a\\\\b'");
+        assert_eq!(quote_string_bs("plain", true), "'plain'");
+        assert_eq!(quote_string_bs("null", true), "null");
+        // the postgres quoter is untouched
+        assert_eq!(quote_string("a\\b", true), "'a\\b'");
+    }
+
+    #[test]
+    fn test_bq_quote_string_backslash_cannot_close_literal() {
+        assert_eq!(bq_quote_string("\\\" OR 1=1 --"), "\"\\\\\\\" OR 1=1 --\"");
     }
 
     #[test]
