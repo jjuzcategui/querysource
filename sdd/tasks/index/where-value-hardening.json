@@ -55,7 +55,7 @@
       "feature_id": "FEAT-167",
       "feature": "where-value-hardening",
       "spec": "sdd/specs/where-value-hardening.spec.md",
-      "status": "in-progress",
+      "status": "done",
       "priority": "high",
       "effort": "M",
       "depends_on": [
@@ -65,8 +65,9 @@
       "parallelism_notes": "modifies querysource/types/validators.pyx which TASK-872 also modifies (lines 27/40) and relies on to_udf being allowlist-only from TASK-872 (functions.pyx); exclusive: rebuilds the Cython extensions in place",
       "assigned_to": null,
       "started_at": "2026-10-13T00:41:15+00:00",
-      "completed_at": null,
-      "file": "sdd/tasks/active/TASK-874-is-valid-closure-cython.md"
+      "completed_at": "2026-10-13T01:01:05+00:00",
+      "file": "sdd/tasks/completed/TASK-874-is-valid-closure-cython.md",
+      "verification": "verified"
     },
     {
       "id": "TASK-875",
