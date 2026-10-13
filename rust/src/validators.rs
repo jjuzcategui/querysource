@@ -172,6 +172,22 @@ pub fn escape_string(value: &str) -> String {
     result
 }
 
+/// Inner text of a well-formed pre-quoted SQL literal, or None.
+///
+/// Well-formed literals start and end with `'`, and every interior quote is
+/// part of a doubled `''` pair.
+pub fn unquote_literal(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'\'' || bytes[bytes.len() - 1] != b'\'' {
+        return None;
+    }
+    let inner = &value[1..value.len() - 1];
+    if inner.replace("''", "").contains('\'') {
+        return None;
+    }
+    Some(inner.replace("''", "'"))
+}
+
 /// Quote a string value for SQL queries.
 ///
 /// Mirrors `Entity.quoteString()` from validators.pyx.
@@ -198,21 +214,8 @@ pub fn quote_string(value: &str, no_dblquoting: bool) -> String {
         v = v.replace('"', "'");
     }
 
-    let start_quote = v.starts_with('\'');
-    let end_quote = v.ends_with('\'');
-
-    // Strip existing quotes
-    let inner = if start_quote && end_quote && v.len() >= 2 {
-        &v[1..v.len() - 1]
-    } else if start_quote {
-        &v[1..]
-    } else if end_quote {
-        &v[..v.len() - 1]
-    } else {
-        &v
-    };
-
-    // Escape internal single quotes
+    // Idempotently unwrap a well-formed literal, then escape from scratch.
+    let inner = unquote_literal(&v).unwrap_or(v);
     let escaped = inner.replace('\'', "''");
 
     format!("'{escaped}'")
@@ -248,7 +251,7 @@ pub fn bq_quote_string(value: &str) -> String {
 #[pyfunction]
 #[pyo3(signature = (value,))]
 pub fn to_string(value: &str) -> String {
-    quote_string(&escape_string(value), true)
+    quote_string(value, true)
 }
 
 /// Convert value to unquoted integer string (or return as-is if already numeric).
@@ -406,6 +409,26 @@ mod tests {
     #[test]
     fn test_quote_string_internal_quotes() {
         assert_eq!(quote_string("it's", true), "'it''s'");
+    }
+
+    #[test]
+    fn test_unquote_literal_grammar() {
+        assert_eq!(unquote_literal("'O''Brien'"), Some("O'Brien".to_string()));
+        assert_eq!(unquote_literal("''"), Some(String::new()));
+        assert_eq!(unquote_literal("O'Brien"), None);
+        assert_eq!(unquote_literal("'a'b'"), None);
+        assert_eq!(unquote_literal("'"), None);
+        assert_eq!(unquote_literal("'abc"), None);
+    }
+
+    #[test]
+    fn test_quote_string_idempotent() {
+        for raw in ["O'Brien", "plain", "it''s", "50%", "a\\b", "x) OR (1=1"] {
+            let once = quote_string(raw, true);
+            assert_eq!(once, format!("'{}'", raw.replace('\'', "''")));
+            assert_eq!(quote_string(&once, true), once);
+        }
+        assert_eq!(to_string("O'Brien"), "'O''Brien'");
     }
 
     #[test]
