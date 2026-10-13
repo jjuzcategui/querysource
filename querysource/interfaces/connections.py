@@ -19,6 +19,7 @@ from ..conf import (
     DB_IDLE_IN_TRANSACTION_TIMEOUT,
     DB_KEEPALIVE_IDLE,
     DB_MAX_WORKERS,
+    DB_POOL_MAX_INACTIVE,
     DB_SESSION_TIMEOUT,
     POSTGRES_SSL,
     POSTGRES_SSL_CA,
@@ -49,6 +50,7 @@ class Connection:
     """
     pgargs: dict = {
         "min_size": 2,
+        "max_inactive_timeout": DB_POOL_MAX_INACTIVE,
         "server_settings": {
             "application_name": "QS.Master",
             "client_min_messages": "notice",

@@ -299,7 +299,7 @@ def _writer_error(
 def test_handler_error_redaction_matrix(db_column_error, debug, caplog):
     """AbstractHandler.Error: redacted or verbose body based on debug flag."""
     logger = logging.getLogger("test.qs.handler")
-    with caplog.at_level(logging.ERROR, logger="test.qs.handler"):
+    with caplog.at_level(logging.WARNING, logger="test.qs.handler"):
         exc = _handler_error(
             debug=debug,
             logger=logger,
@@ -336,7 +336,7 @@ def test_handler_except_redaction_matrix(debug, caplog):
     """AbstractHandler.Except: redacted or verbose body based on debug flag."""
     logger = logging.getLogger("test.qs.handler.except")
     exc_cause = RuntimeError("internal error details boom")
-    with caplog.at_level(logging.ERROR, logger="test.qs.handler.except"):
+    with caplog.at_level(logging.WARNING, logger="test.qs.handler.except"):
         exc = _handler_except(
             debug=debug,
             logger=logger,
@@ -410,7 +410,7 @@ def test_handler_except_preserves_500_code():
 def test_dataoutput_error_redaction_matrix(db_column_error, debug, caplog):
     """DataOutput.error: redacted or verbose body based on DEBUG flag."""
     logger = logging.getLogger("test.qs.output")
-    with caplog.at_level(logging.ERROR, logger="test.qs.output"):
+    with caplog.at_level(logging.WARNING, logger="test.qs.output"):
         with pytest.raises(HTTPException) as exc_info:
             _output_error(
                 debug=debug,
@@ -462,7 +462,7 @@ def test_dataoutput_error_500_raises_internal_server_error():
 def test_writer_error_redaction_matrix(db_column_error, debug, caplog):
     """AbstractWriter.error: redacted or verbose body based on DEBUG flag."""
     logger = logging.getLogger("test.qs.writer")
-    with caplog.at_level(logging.ERROR, logger="test.qs.writer"):
+    with caplog.at_level(logging.WARNING, logger="test.qs.writer"):
         exc = _writer_error(
             debug=debug,
             logger=logger,
@@ -502,7 +502,7 @@ def test_writer_error_returns_not_raises():
 def test_error_id_in_body_matches_log_handler(caplog):
     """error_id in the HTTP body matches the error_id in the server log."""
     logger = logging.getLogger("test.qs.correlation.handler")
-    with caplog.at_level(logging.ERROR, logger="test.qs.correlation.handler"):
+    with caplog.at_level(logging.WARNING, logger="test.qs.correlation.handler"):
         exc = _handler_error(
             debug=False,
             logger=logger,
@@ -517,7 +517,7 @@ def test_error_id_in_body_matches_log_handler(caplog):
 def test_error_id_in_body_matches_log_output(caplog):
     """DataOutput.error: error_id in HTTP body matches server log."""
     logger = logging.getLogger("test.qs.correlation.output")
-    with caplog.at_level(logging.ERROR, logger="test.qs.correlation.output"):
+    with caplog.at_level(logging.WARNING, logger="test.qs.correlation.output"):
         with pytest.raises(HTTPException) as exc_info:
             _output_error(
                 debug=False,
@@ -533,7 +533,7 @@ def test_error_id_in_body_matches_log_output(caplog):
 def test_error_id_in_body_matches_log_writer(caplog):
     """AbstractWriter.error: error_id in HTTP body matches server log."""
     logger = logging.getLogger("test.qs.correlation.writer")
-    with caplog.at_level(logging.ERROR, logger="test.qs.correlation.writer"):
+    with caplog.at_level(logging.WARNING, logger="test.qs.correlation.writer"):
         exc = _writer_error(
             debug=False,
             logger=logger,

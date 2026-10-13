@@ -1,12 +1,10 @@
-from pandas import DataFrame
 from uuid import uuid4
+
 from navconfig.logging import logging
-from ....exceptions import (
-    DataNotFound,
-    DriverError,
-    QueryException
-)
-from ....types.dt.filters import create_filter
+from pandas import DataFrame
+
+from ....exceptions import DataNotFound, DriverError, QueryException
+from ....types.dt.filters import combine_conditions, create_filter
 from .abstract import AbstractOperator
 
 
@@ -51,7 +49,7 @@ class Join(AbstractOperator):
         if 'on' in kwargs:
             kwargs['using'] = kwargs.pop('on')
 
-        super(Join, self).__init__(data, **kwargs)
+        super().__init__(data, **kwargs)
         self.data = data
 
     async def start(self):
@@ -194,8 +192,7 @@ class Join(AbstractOperator):
             conditions = create_filter(filter_specs, df)
 
             # Apply conditions with AND logic
-            condition_str = " & ".join(conditions)
-            df_filtered = df.loc[eval(condition_str)]
+            df_filtered = df.loc[combine_conditions(conditions, '&')]
 
             if df_filtered is None:
                 raise DataNotFound(
@@ -237,7 +234,7 @@ class Join(AbstractOperator):
         except DataNotFound:
             raise
         except Exception as err:
-            print('Error on Join > ', err)
+            logging.error('Error on Join > %s', err)
             raise QueryException(
                 f"Error on Join: {err!s}"
             ) from err

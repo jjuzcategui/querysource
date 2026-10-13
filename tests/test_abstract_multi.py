@@ -1,5 +1,6 @@
 """Unit tests for AbstractMulti base class (TASK-660)."""
 import pytest
+
 from querysource.queries.multi.abstract import AbstractMulti
 
 
@@ -51,6 +52,42 @@ class TestAbstractMultiContextManager:
         with pytest.raises(QueryException):
             async with step:
                 raise ValueError("test error")
+
+    @pytest.mark.asyncio
+    async def test_aexit_wraps_message_with_prefix(self):
+        from querysource.exceptions import QueryException
+        step = ConcreteStep(data={})
+        with pytest.raises(QueryException, match="MultiQuery Error: test error") as info:
+            async with step:
+                raise ValueError("test error")
+        assert type(info.value) is QueryException
+
+    @pytest.mark.asyncio
+    async def test_aexit_lets_data_not_found_through_unwrapped(self):
+        """An empty result is not a failure: DataNotFound keeps its type and code."""
+        from querysource.exceptions import DataNotFound
+        step = ConcreteStep(data={})
+        with pytest.raises(DataNotFound) as info:
+            async with step:
+                raise DataNotFound("Filter: No Data was Found after Filtering.")
+        assert type(info.value) is DataNotFound
+        assert info.value.code == 404
+        assert str(info.value) == "Filter: No Data was Found after Filtering."
+
+    @pytest.mark.asyncio
+    async def test_aexit_still_closes_on_data_not_found(self):
+        from querysource.exceptions import DataNotFound
+
+        closed = []
+
+        class Closing(ConcreteStep):
+            async def close(self):
+                closed.append(True)
+
+        with pytest.raises(DataNotFound):
+            async with Closing(data={}):
+                raise DataNotFound("empty")
+        assert closed == [True]
 
 
 class ConcreteStepWithPrivateAttr(AbstractMulti):

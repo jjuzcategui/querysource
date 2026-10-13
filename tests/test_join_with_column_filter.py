@@ -1,7 +1,8 @@
 """Integration tests for Join + Column Filter workflows."""
 import pandas as pd
 import pytest
-from querysource.types.dt.filters import create_filter
+
+from querysource.types.dt.filters import combine_conditions, create_filter
 
 
 class TestJoinWithColumnFilters:
@@ -56,8 +57,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, joined_df)
-        df = joined_df  # Make df available for eval
-        result = df.loc[eval(" & ".join(conditions))]
+        result = joined_df.loc[combine_conditions(conditions, '&')]
 
         # All rows pass this condition
         assert len(result) == len(joined_df)
@@ -75,8 +75,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, joined_df)
-        df = joined_df  # Make df available for eval
-        result = df.loc[eval(" & ".join(conditions))]
+        result = joined_df.loc[combine_conditions(conditions, '&')]
 
         # Rows where fecha_llamada < fecha_creacion
         # Row 0: 2024-01-15 < 2024-01-10 ✗
@@ -100,8 +99,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, joined_df)
-        df = joined_df  # Make df available for eval
-        result = df.loc[eval(" & ".join(conditions))]
+        result = joined_df.loc[combine_conditions(conditions, '&')]
 
         # Check that all results satisfy the condition
         for _, row in result.iterrows():
@@ -134,8 +132,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, joined_df)
-        df = joined_df  # Make df available for eval
-        result = df.loc[eval(" & ".join(conditions))]
+        result = joined_df.loc[combine_conditions(conditions, '&')]
 
         # Verify all conditions are met
         for _, row in result.iterrows():
@@ -158,8 +155,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, joined_df)
-        df = joined_df  # Make df available for eval
-        result = df.loc[eval(" & ".join(conditions))]
+        result = joined_df.loc[combine_conditions(conditions, '&')]
 
         # Verify condition
         for _, row in result.iterrows():
@@ -179,8 +175,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, joined_df)
-        df = joined_df  # Make df available for eval
-        result = df.loc[eval(" & ".join(conditions))]
+        result = joined_df.loc[combine_conditions(conditions, '&')]
 
         # Should be empty (no podcast was listened before creation)
         assert len(result) == 0
@@ -203,8 +198,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, joined_df)
-        df = joined_df  # Make df available for eval
-        result = df.loc[eval(" & ".join(conditions))]
+        result = joined_df.loc[combine_conditions(conditions, '&')]
 
         # All results should be for usuario_id 100
         assert all(result['usuario_id'] == 100)
@@ -229,8 +223,7 @@ class TestJoinWithColumnFilters:
             ]
 
             conditions = create_filter(_filter, joined_df)
-            df = joined_df  # Make df available for eval
-            result = df.loc[eval(" & ".join(conditions))]
+            result = joined_df.loc[combine_conditions(conditions, '&')]
 
             # Just verify it doesn't crash and returns something
             assert isinstance(result, pd.DataFrame)
@@ -260,7 +253,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # All rows should satisfy the range condition
         assert len(result) == 4
@@ -294,8 +287,7 @@ class TestJoinWithColumnFilters:
         ]
 
         conditions = create_filter(_filter, joined)
-        df = joined  # Make df available for eval
-        result = df.loc[eval(" & ".join(conditions))]
+        result = joined.loc[combine_conditions(conditions, '&')]
 
         # Verify condition
         for _, row in result.iterrows():

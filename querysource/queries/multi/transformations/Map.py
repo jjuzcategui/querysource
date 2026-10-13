@@ -1,14 +1,13 @@
+import copy
 from collections.abc import Callable
 from typing import Union
+
 import pandas as pd
-import copy
-from ....exceptions import (
-    DriverError,
-    QueryException
-)
-from .abstract import AbstractTransform
+
+from ....exceptions import DriverError, QueryException
 from ....types.dt import transforms as dffunctions
 from ....utils.getfunc import getFunction
+from .abstract import AbstractTransform
 
 
 class Map(AbstractTransform):
@@ -60,7 +59,7 @@ class Map(AbstractTransform):
             name for name, obj in vars(dffunctions).items()
             if inspect.isfunction(obj)
             and not name.startswith('_')
-            and name != 'getFunction'
+            and obj.__module__ == dffunctions.__name__
         ]
 
     def __init__(self, data: Union[dict, pd.DataFrame], **kwargs) -> None:
@@ -68,7 +67,7 @@ class Map(AbstractTransform):
         # Default False so existing Maps (which never reset the index) are
         # unaffected; only opt-in resets now take effect.
         self.reset_index: bool = kwargs.pop('reset_index', False)
-        super(Map, self).__init__(data, **kwargs)
+        super().__init__(data, **kwargs)
         if not hasattr(self, 'fields'):
             raise DriverError(
                 "Map Transform: Missing Fields for transformation."
@@ -128,16 +127,15 @@ class Map(AbstractTransform):
         """
         Call a function.
         """
-        try:
+        # Only the transform functions the catalog publishes are resolvable by
+        # name (FEAT-166); anything else falls through to the scalar allowlist.
+        if isinstance(fname, str) and fname in self.transform_functions():
             func = getattr(dffunctions, fname)
             self.logger.debug(
                 f"Calling Function: {fname!s} with args: {args}"
             )
             it = func(df=it, field=field, **args)
-            # it = it.copy()
             return it
-        except AttributeError:
-            pass
         try:
             func = getFunction(fname)
         except AttributeError:
@@ -213,4 +211,4 @@ class Map(AbstractTransform):
         except Exception as e:
             raise ValueError(
                 f"Map: cannot handle scalar or Series input with given arguments: {e}"
-            )
+            ) from e

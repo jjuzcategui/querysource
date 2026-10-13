@@ -979,11 +979,7 @@ class MultiQS(BaseQuery):
                                 async with obj as google:
                                     result = await google.run()
                             except DataNotFound as ex:
-                                raise self.Error(
-                                    message="No Data was Found after GoogleMaps)",
-                                    exception=ex,
-                                    code=404
-                                ) from ex
+                                raise self.NotFound("No Data was Found after GoogleMaps.") from ex
                             except (QueryException, Exception) as ex:
                                 raise self.Error(
                                     message=f"Error on GoogleMaps: {ex!s}",
@@ -998,11 +994,7 @@ class MultiQS(BaseQuery):
                             except ImportError:
                                 raise
                             except DataNotFound as ex:
-                                raise self.Error(
-                                    message=f"No Data was Found after Transform {step_name}.",
-                                    exception=ex,
-                                    code=404
-                                ) from ex
+                                raise self.NotFound(f"No Data was Found after Transform {step_name}.") from ex
                             except Exception as ex:
                                 raise self.Error(
                                     message=f"Error on Transform {step_name}, error: {ex}",
@@ -1016,11 +1008,7 @@ class MultiQS(BaseQuery):
                     async with _filter as f:
                         result = await f.run()
                 except DataNotFound as ex:
-                    raise self.Error(
-                        message="No Data was Found after Filtering.",
-                        exception=ex,
-                        code=404
-                    ) from ex
+                    raise self.NotFound("No Data was Found after Filtering.") from ex
                 except (QueryException, Exception) as ex:
                     raise self.Error(
                         message=f"Error on Filtering: {ex!s}",
@@ -1034,11 +1022,7 @@ class MultiQS(BaseQuery):
                     async with groupby as g:
                         result = await g.run()
                 except DataNotFound as ex:
-                    raise self.Error(
-                        message="No Data was Found after GroupBy.",
-                        exception=ex,
-                        code=404
-                    ) from ex
+                    raise self.NotFound("No Data was Found after GroupBy.") from ex
                 except (QueryException, Exception) as ex:
                     raise self.Error(
                         message=f"Error on GroupBy: {ex!s}",

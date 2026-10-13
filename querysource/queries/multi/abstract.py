@@ -11,7 +11,7 @@ from typing import Union
 
 import pandas as pd
 
-from ...exceptions import QueryException
+from ...exceptions import DataNotFound, QueryException
 from ._introspect import SchemaIntrospectable
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,12 @@ class AbstractMulti(SchemaIntrospectable, ABC):
             if exc_type is asyncio.CancelledError:
                 await self.close()
                 return False  # let cancellation propagate
+            if issubclass(exc_type, DataNotFound):
+                # "No rows" is a result, not a failure: keep the DataNotFound
+                # type (and its 404 code) so MultiQS and the HTTP handlers can
+                # map it to an empty response instead of an error envelope.
+                await self.close()
+                return False
             raise QueryException(
                 f"MultiQuery Error: {exc_value!s}"
             ) from exc_value

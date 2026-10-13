@@ -1,8 +1,9 @@
 """Unit tests for column-to-column filtering with $column syntax."""
 import pandas as pd
 import pytest
-from querysource.types.dt.filters import create_filter
+
 from querysource.exceptions import QueryException
+from querysource.types.dt.filters import combine_conditions, create_filter
 
 
 class TestColumnToColumnFilters:
@@ -29,7 +30,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # Expected: rows where fecha_escuchado >= fecha_podcast
         assert len(result) == 3
@@ -52,7 +53,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # Expected: rows where valor_a > valor_b
         assert len(result) == 2
@@ -75,7 +76,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # col_a < col_b: rows 1 (5 < 10) and 3 (15 < 20)
         assert len(result) == 2
@@ -98,7 +99,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # Only rows where name == expected_name
         assert len(result) == 2
@@ -121,7 +122,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # Only row 2 where 10 != 5
         assert len(result) == 1
@@ -190,7 +191,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # valor_a > valor_b AND status == 'active'
         assert len(result) == 2
@@ -219,7 +220,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # edad between edad_minima and edad_maxima
         # Row 1: 25 between 20 and 30 ✓
@@ -247,7 +248,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # Only rows with valid comparisons where col_a > col_b
         # Row 1: 10 > 5 ✓
@@ -273,7 +274,7 @@ class TestColumnToColumnFilters:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         # Only rows where palabras match
         assert len(result) == 2
@@ -299,7 +300,7 @@ class TestScalarFiltersStillWork:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         assert len(result) == 2
         assert list(result['id'].values) == [2, 3]
@@ -320,7 +321,7 @@ class TestScalarFiltersStillWork:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         assert len(result) == 2
         assert list(result['id'].values) == [1, 3]
@@ -341,7 +342,7 @@ class TestScalarFiltersStillWork:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         assert len(result) == 2
         assert list(result['id'].values) == [2, 3]
@@ -368,7 +369,7 @@ class TestNumericBranchHardening:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         assert len(result) == 2
         assert list(result['id'].values) == [2, 3]
@@ -406,7 +407,7 @@ class TestDatetimeBranchHardening:
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         assert len(result) == 2
         assert list(result['id'].values) == [2, 3]
@@ -424,12 +425,12 @@ class TestDatetimeBranchHardening:
             {
                 'column': 'fecha',
                 'expression': '<',
-                'value': _dt.datetime(2024, 2, 16),
+                'value': _dt.datetime(2024, 2, 16),  # noqa: DTZ001 - naive, matches naive column
             }
         ]
 
         conditions = create_filter(_filter, df)
-        result = df.loc[eval(" & ".join(conditions))]
+        result = df.loc[combine_conditions(conditions, '&')]
 
         assert len(result) == 2
         assert list(result['id'].values) == [1, 2]

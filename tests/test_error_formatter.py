@@ -205,3 +205,37 @@ def test_public_detail_survives_production():
 def test_public_detail_absent_keeps_minimal_payload():
     payload = build_error_payload(category="query_error", status=400, public_detail=None)
     assert set(payload) == {"error", "status", "error_id"}
+
+
+def test_client_error_logs_warning_without_traceback(caplog):
+    """A 4xx is a usage outcome: WARNING, error_id + detail, no stack trace."""
+    logger = logging.getLogger("test.qs.errors.4xx")
+    with caplog.at_level(logging.WARNING, logger="test.qs.errors.4xx"):
+        try:
+            raise LookupError("Query not found: 'missing_slug'")
+        except LookupError as exc:
+            payload = build_error_payload(
+                category="not_found", status=404, exception=exc, logger=logger
+            )
+    records = [r for r in caplog.records if r.name == "test.qs.errors.4xx"]
+    assert [r.levelno for r in records] == [logging.WARNING]
+    assert payload["error_id"] in caplog.text
+    assert "missing_slug" in caplog.text
+    assert "Traceback" not in caplog.text
+    assert "trace=" not in caplog.text
+
+
+def test_server_error_logs_error_with_traceback(caplog):
+    """A 5xx keeps ERROR level and the full traceback for diagnosis."""
+    logger = logging.getLogger("test.qs.errors.5xx")
+    with caplog.at_level(logging.WARNING, logger="test.qs.errors.5xx"):
+        try:
+            raise RuntimeError("pool exhausted")
+        except RuntimeError as exc:
+            payload = build_error_payload(
+                category="server_error", status=500, exception=exc, logger=logger
+            )
+    records = [r for r in caplog.records if r.name == "test.qs.errors.5xx"]
+    assert [r.levelno for r in records] == [logging.ERROR]
+    assert payload["error_id"] in caplog.text
+    assert "Traceback" in caplog.text and "pool exhausted" in caplog.text

@@ -19,7 +19,7 @@ from aiohttp import web
 
 import querysource.queries.multi as multi_module
 from querysource import conf
-from querysource.exceptions import DriverError, QueryException
+from querysource.exceptions import DataNotFound, DriverError, QueryException
 from querysource.queries.multi import MultiQS
 from querysource.queries.multi.sources.executors import LocalExecutor
 from querysource.queries.obj import QueryObject
@@ -121,6 +121,28 @@ class TestInlinePipeline:
         assert rendered == {
             "stores": "SELECT store_id, region FROM public.stores  WHERE region='EMEA'",
         }
+
+    @pytest.mark.parametrize("step", [
+        pytest.param(
+            {"Filter": {"conditions": [{"column": "amount", "expression": ">", "value": 1000}]}},
+            id="filter",
+        ),
+        pytest.param(
+            {"Filter": {"conditions": [{"column": "amount", "expression": ">", "value": 1000}]},
+             "GroupBy": {"by": ["store_id"], "columns": {"amount": "sum"}}},
+            id="filter-before-groupby",
+        ),
+    ])
+    async def test_step_that_empties_the_result_raises_data_not_found(
+        self, rendered: dict[str, str], step: dict
+    ) -> None:
+        """An all-filtering step surfaces as DataNotFound (404), not a generic QueryException."""
+        mqs = MultiQS(query={"queries": {"sales": {"slug": "sales_q"}}, **step})
+        with pytest.raises(DataNotFound, match="No Data was Found after Filtering") as info:
+            await mqs.query()
+        assert type(info.value) is DataNotFound
+        assert info.value.code == 404
+        assert "sales" in rendered
 
     async def test_raw_inline_child_is_passed_through(self, rendered: dict[str, str]) -> None:
         mqs = MultiQS(query={"queries": {"stores": {"query": "SELECT 1", "driver": "pg"}}})

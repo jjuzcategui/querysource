@@ -1,11 +1,15 @@
+import logging
+
 import numpy as np
 from pandas import DataFrame
 
-from .....exceptions import DataNotFound, DriverError
+from .....exceptions import DataNotFound, DriverError, QueryException
 from .....types import is_empty
 from .....types.dt import filters as dffunctions
-from .....types.dt.filters import create_filter
+from .....types.dt.filters import combine_conditions, create_filter
 from ..abstract import AbstractOperator
+
+_logger = logging.getLogger(__name__)
 
 
 class Filter(AbstractOperator):
@@ -50,12 +54,14 @@ class Filter(AbstractOperator):
         """
         import inspect
         _builders = {
-            'getFunction', 'build_condition', 'create_filter_chain', 'create_filter'
+            'build_condition', 'create_filter_chain', 'create_filter',
+            'combine_conditions',
         }
         return [
             name for name, obj in vars(dffunctions).items()
             if inspect.isfunction(obj)
             and not name.startswith('_')
+            and obj.__module__ == dffunctions.__name__
             and name not in _builders
         ]
 
@@ -112,20 +118,21 @@ class Filter(AbstractOperator):
             self.data.dropna(subset=self.dropna, how="all")
         # iterate over all filtering conditions:
         it = self.data.copy()
+        # Named filter functions: only the allowlist published by the catalog
+        # (``Filter.filter_functions()``) is resolvable — never module globals.
+        allowed = set(self.filter_functions())
         for ft, args in self.filter_conditions.items():
+            if ft not in allowed:
+                raise QueryException(f"Filter: unknown filter function '{ft}'")
             self._applied.append(f"Filter: {ft!s} args: {args}")
-            # TODO: create an expression builder
-            # condition = dataframe[(dataframe[column].empty) & (dataframe[column]=='')].index
-            # check if is a function
+            func = getattr(dffunctions, ft)
             try:
-                try:
-                    func = getattr(dffunctions, ft)
-                except AttributeError:
-                    func = globals()[ft]
-                if callable(func):
-                    it = func(it, **args)
+                it = func(it, **(args or {}))
+            except QueryException:
+                raise
             except Exception as err:
-                print(f"Error on {ft}: {err}")
+                _logger.error("Filter: error applying %s: %s", ft, err)
+                raise QueryException(f"Filter: error applying '{ft}': {err}") from err
         df = it
         if df is None or df.empty:
             raise DataNotFound(
@@ -144,12 +151,14 @@ class Filter(AbstractOperator):
         # are both optional/combinable — apply them together.
         filter_specs = list(self._filter or []) + list(self.conditions or [])
         if filter_specs:
-            conditions = create_filter(filter_specs, df)
-            # Joining all conditions
-            self.condition = f" {self._operator} ".join(conditions)
-            df = df.loc[
-                eval(self.condition)
-            ]  # pylint: disable=W0123
+            masks = create_filter(filter_specs, df)
+            # Descriptive text only (never evaluated) — kept for _applied/debug parity.
+            self.condition = f" {self._operator} ".join(
+                f"{spec.get('column')} {spec.get('expression', '==')} {spec.get('value')!r}"
+                for spec in filter_specs
+            )
+            self._applied.append(f"Filter: conditions: {self.condition}")
+            df = df.loc[combine_conditions(masks, self._operator)]
         if df is None or df.empty:
             raise DataNotFound(
                 "Filter: No Data was Found after Filtering."

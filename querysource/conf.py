@@ -52,12 +52,20 @@ POSTGRES_MAX_CONNECTIONS = config.getint('POSTGRES_MAX_CONNECTIONS', fallback=20
 
 DB_TIMEOUT = config.getint("DB_TIMEOUT", fallback=3600)
 DB_STATEMENT_TIMEOUT = config.get("DB_STATEMENT_TIMEOUT", fallback="3600000")
-DB_SESSION_TIMEOUT = config.get('DB_SESSION_TIMEOUT', fallback="60min")
+# Server-side session hygiene. QuerySource acquires a connection, runs a
+# query and releases it (no cursors, no long-lived transactions), so idle
+# backends can be reaped in minutes rather than the historical 60min. These
+# are the values sent as ``server_settings`` on every QS.* connection.
+DB_SESSION_TIMEOUT = config.get('DB_SESSION_TIMEOUT', fallback="10min")
 DB_IDLE_IN_TRANSACTION_TIMEOUT = config.get(
     'DB_IDLE_IN_TRANSACTION_TIMEOUT',
-    fallback="60min"
+    fallback="2min"
 )
-DB_KEEPALIVE_IDLE = config.get('DB_KEEPALIVE_IDLE', fallback="30min")
+DB_KEEPALIVE_IDLE = config.get('DB_KEEPALIVE_IDLE', fallback="60s")
+# Client-side pool pruning (asyncpg ``max_inactive_connection_lifetime``),
+# in seconds. Keep it BELOW DB_SESSION_TIMEOUT so the pool closes its own
+# idle connections cleanly before the server terminates them.
+DB_POOL_MAX_INACTIVE = config.getint('DB_POOL_MAX_INACTIVE', fallback=240)
 DB_MAX_WORKERS = config.get('DB_MAX_WORKERS', fallback=128)
 
 POSTGRES_SSL = config.getboolean('POSTGRES_SSL', fallback=False)

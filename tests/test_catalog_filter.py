@@ -45,6 +45,16 @@ def test_operator_enum(filter_entry):
     assert filter_entry.json_schema["properties"]["operator"]["enum"] == ["&", "|"]
 
 
+def test_filter_expression_enum_has_no_function_dispatch(filter_entry):
+    """FEAT-166: ``func``/``function`` were removed; values are data, never code."""
+    enum = filter_entry.json_schema["$defs"]["filterExpression"]["enum"]
+    assert "func" not in enum and "function" not in enum
+    for expected in ("==", "!=", ">", "<", ">=", "<=", "gt", "lt", "contains",
+                     "not_contains", "startswith", "endswith", "regex",
+                     "not_regex", "fullmatch", "is_null", "not_null", "is_empty"):
+        assert expected in enum, expected
+
+
 def test_filter_conditions_property_names_bound(filter_entry):
     fc = filter_entry.json_schema["properties"]["filter_conditions"]
     assert fc["propertyNames"]["$ref"] == "#/$defs/filterFunc"
