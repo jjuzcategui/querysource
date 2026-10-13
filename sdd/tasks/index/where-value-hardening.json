@@ -76,7 +76,7 @@
       "feature_id": "FEAT-167",
       "feature": "where-value-hardening",
       "spec": "sdd/specs/where-value-hardening.spec.md",
-      "status": "in-progress",
+      "status": "done",
       "priority": "high",
       "effort": "M",
       "depends_on": [],
@@ -84,8 +84,9 @@
       "parallelism_notes": "no file shared with the Cython tasks; exclusive: rebuilds and stages the Rust extension (make build-rust && make stage-rust) into the source tree before its tests run",
       "assigned_to": null,
       "started_at": "2026-10-13T00:41:15+00:00",
-      "completed_at": null,
-      "file": "sdd/tasks/active/TASK-875-rust-allowlists-env-aware.md"
+      "completed_at": "2026-10-13T01:11:21+00:00",
+      "file": "sdd/tasks/completed/TASK-875-rust-allowlists-env-aware.md",
+      "verification": "verified"
     },
     {
       "id": "TASK-876",
