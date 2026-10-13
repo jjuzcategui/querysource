@@ -116,7 +116,7 @@
       "feature_id": "FEAT-167",
       "feature": "where-value-hardening",
       "spec": "sdd/specs/where-value-hardening.spec.md",
-      "status": "in-progress",
+      "status": "done",
       "priority": "high",
       "effort": "M",
       "depends_on": [
@@ -126,8 +126,9 @@
       "parallelism_notes": "modifies rust/src/validators.rs (quote_string, to_string) which TASK-875 also modifies (statics, predicates); exclusive: rebuilds and stages the Rust extension",
       "assigned_to": null,
       "started_at": "2026-10-13T00:41:15+00:00",
-      "completed_at": null,
-      "file": "sdd/tasks/active/TASK-877-idempotent-quoting-rust.md"
+      "completed_at": "2026-10-13T01:25:47+00:00",
+      "file": "sdd/tasks/completed/TASK-877-idempotent-quoting-rust.md",
+      "verification": "verified"
     },
     {
       "id": "TASK-878",
