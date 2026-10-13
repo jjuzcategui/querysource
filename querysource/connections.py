@@ -19,6 +19,8 @@ from navigator.types import WebApp
 
 from .conf import (
     DB_IDLE_IN_TRANSACTION_TIMEOUT,
+    DB_KEEPALIVE_IDLE,
+    DB_POOL_MAX_INACTIVE,
     DB_SESSION_TIMEOUT,
     POSTGRES_MAX_CONNECTIONS,
     POSTGRES_MIN_CONNECTIONS,
@@ -40,11 +42,15 @@ class QueryConnection(Connection, metaclass=Singleton):
     """
     pgargs: dict = {
         "min_size": 2,
+        # asyncpg max_inactive_connection_lifetime (seconds): the pool
+        # closes its own idle connections before the server reaps them.
+        "max_inactive_timeout": DB_POOL_MAX_INACTIVE,
         "server_settings": {
             "application_name": "QS.Master",
             "client_min_messages": "notice",
             "jit": "on",
             "effective_cache_size": "2147483647",
+            "tcp_keepalives_idle": f"{DB_KEEPALIVE_IDLE}",
             "idle_in_transaction_session_timeout": f"{DB_IDLE_IN_TRANSACTION_TIMEOUT}",
             "idle_session_timeout": f"{DB_SESSION_TIMEOUT}"
         }
