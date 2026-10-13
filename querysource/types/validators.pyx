@@ -20,11 +20,9 @@ from decimal import Decimal
 from dateutil import parser
 from uuid import UUID
 from ..utils.functions import *
+from ..utils.udf_list import udf_list
 import orjson
 from numpy import int64, ndarray
-
-
-cdef list udf = ["CURRENT_YEAR", "CURRENT_MONTH", "TODAY", "YESTERDAY", "LAST_YEAR", "FDOM", "LDOM"]
 
 
 cdef list _env_list(str name, list default, bint upper = True):
@@ -37,7 +35,7 @@ cdef list _env_list(str name, list default, bint upper = True):
         for s in str(raw).split(',') if s.strip()
     ]
 
-cdef list UDF_LIST = _env_list('UDF_LIST', udf)
+cdef list UDF_LIST = udf_list()
 cdef list PG_CONSTANTS = _env_list('PG_CONSTANTS', ["CURRENT_DATE", "CURRENT_TIMESTAMP"])
 cdef list PG_UDF = _env_list('PG_UDF', ["now()"], False)
 
