@@ -2,6 +2,7 @@
 # Copyright (C) 2018-present Jesus Lara
 #
 import os
+import logging
 import asyncio
 import builtins
 import re
@@ -15,7 +16,6 @@ from libcpp cimport bool as bool_t
 from cpython cimport datetime
 from cpython.datetime cimport datetime as dt
 from dataclasses import _MISSING_TYPE
-from navconfig import config
 from decimal import Decimal
 from dateutil import parser
 from uuid import UUID
@@ -23,6 +23,8 @@ from ..utils.functions import *
 from ..utils.udf_list import udf_list
 import orjson
 from numpy import int64, ndarray
+
+logger = logging.getLogger(__name__)
 
 
 cdef list _env_list(str name, list default, bint upper = True):
@@ -205,10 +207,8 @@ cpdef bool_t is_udf(object value):
     return value in UDF_LIST
 
 cdef bool_t is_pg_function(object value):
-    if '(' in value:
-        return True
-    else:
-        return value in PG_UDF
+    """True only for an exact member of PG_UDF (default ['now()']) — never for a value that merely contains '('."""
+    return isinstance(value, str) and value in PG_UDF
 
 cpdef bool_t is_pgconstant(object value):
     return value in PG_CONSTANTS
@@ -421,9 +421,6 @@ cpdef bool_t is_string(object value):
             datetime.timedelta,
             UUID
         ))
-
-cdef object get_config_var(object value):
-    return config.get(value)
 
 cdef str to_string(object value):
     return quoteString(escape_string(value))
@@ -643,39 +640,26 @@ cpdef object is_valid(object key, object value, str T = None, bint noquote = Fal
                     return conv(value)
         except KeyError:
             pass
-    if value == 'null' or value == 'NULL' or value == None or value == 'None':
+    if value == 'null' or value == 'NULL' or value is None or value == 'None':
         return 'null'
     elif is_boolean(value):
         return value
     elif is_integer(value):
         return value
     elif is_udf(str(value).upper()):
-        return quoteString(to_udf(value))
+        # Relative-date keyword (UDF_LIST only — to_udf is allowlist-only since TASK-872).
+        try:
+            return quoteString(to_udf(value))
+        except Exception as ex:  # noqa: BLE001 — a keyword whose impl fails degrades to a literal
+            logger.warning("is_valid: keyword %r for %r could not be resolved: %s", value, key, ex)
     elif is_pgconstant(str(value).upper()):
         return value.upper()
     elif is_pg_function(value):
         return value # return exactly the value
     elif isinstance(value, list) or isinstance(value, dict):
         return value
-    else:
-        try:
-            val = get_config_var(value)
-            if val:
-                if isinstance(val, str) or T == 'date':
-                    return quoteString(val)
-                else:
-                    return escape_string(val)
-        except Exception:
-            pass
-        try:
-            val = to_udf(value)
-            if noquote:
-                return val
-            return quoteString(val)
-        except KeyError:
-            pass
-        except Exception as ex:
-            print(f'Valid Error on {key}:{value}, error: {ex}')
-        if noquote:
-            return value
-        return quoteString(value)
+    # Everything else is a literal: never a configuration value, never a function name,
+    # never raw because it contains '(' (FEAT-167 G1/G2, §8 Q2/Q3).
+    if noquote:
+        return value
+    return quoteString(value)
