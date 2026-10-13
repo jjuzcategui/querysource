@@ -27,9 +27,34 @@ from ...types.validators import strtobool
 from ...utils.getfunc import getFunction
 
 
+def _to_datetime_series(series: pd.Series) -> pd.Series:
+    """
+    Parse a Series to datetime, tolerating mixed UTC offsets.
+
+    pandas>=3 raises ``ValueError`` when values carry different UTC offsets
+    (e.g. DST ``-07:00``/``-08:00``) unless ``utc=True``. In that case each
+    value is parsed on its own, keeping its original offset (object dtype),
+    which matches the pandas<3 behavior.
+
+    :param series: pandas Series with datetime-like values.
+    :return: Series parsed as datetime.
+    """
+    try:
+        return pd.to_datetime(series, errors="coerce")
+    except ValueError:
+        def _parse(value):
+            if value is None or (isinstance(value, float) and np.isnan(value)):
+                return pd.NaT
+            try:
+                return pd.Timestamp(value)
+            except (ValueError, TypeError):
+                return pd.NaT
+        return series.map(_parse).astype(object)
+
+
 def to_timestamp(df: pd.DataFrame, field: str, remove_nat: bool = False):
     try:
-        df[field] = pd.to_datetime(df[field], errors="coerce")
+        df[field] = _to_datetime_series(df[field])
         df[field] = df[field].where(df[field].notnull(), None)
         df[field] = df[field].astype("datetime64[ns]")
     except Exception as err:
@@ -1423,7 +1448,7 @@ def convert_to_datetime(df: pd.DataFrame, field: str, remove_nat=False):
     :return: Modified pandas DataFrame with the values converted to datetime format.
     """
     try:
-        df[field] = pd.to_datetime(df[field], errors="coerce")
+        df[field] = _to_datetime_series(df[field])
         df[field] = df[field].where(df[field].notnull(), None)
         df[field] = df[field].astype("datetime64[ns]")
     except Exception as err:
@@ -2090,7 +2115,13 @@ def fill_nulls(df: pd.DataFrame, field: str, column: str):
 
         # Fill null values in the field with values from the specified column
         try:
-            df.loc[df[field].isnull(), field] = df[column]
+            mask = df[field].isnull()
+            try:
+                df.loc[mask, field] = df[column]
+            except TypeError:
+                # pandas>=3 string dtype rejects non-string fill values
+                df[field] = df[field].astype(object)
+                df.loc[mask, field] = df[column]
         except KeyError:
             logging.error(f"Fill Nulls: Column {column} doesn't exist")
         except ValueError as e:

@@ -1,6 +1,15 @@
 Unreleased
 ==========
 
+pandas 3 compatibility for datetime and fill transforms
+-------------------------------------------------------
+
+- ``convert_to_datetime`` / ``to_timestamp``: values with mixed UTC offsets
+  (e.g. DST ``-07:00``/``-08:00``) no longer stay as strings under pandas>=3;
+  each value is parsed keeping its own offset, matching the pandas<3 result.
+- ``fill_nulls``: filling a string-dtype column with a non-string value
+  (e.g. ``False``) no longer raises ``TypeError`` under pandas>=3.
+
 Describe API for query slugs (FEAT-148)
 ---------------------------------------
 
