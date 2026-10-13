@@ -33,8 +33,8 @@ import pytest
 
 # Try to get Entity from the compiled extension; fall back to pure-Python stubs.
 try:
-    import sys
     import os
+    import sys
     # Temporarily remove the worktree root so the installed package takes priority
     _wt_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
     _removed = _wt_root in sys.path
