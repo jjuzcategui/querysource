@@ -6,6 +6,7 @@
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
 use regex::Regex;
+use std::env;
 
 // Regex for field_components: ^(?:(@|!|#|~|:|))(\w*)(?:(\||\&|\!|\~|\#)|)+$
 static EVAL_FIELD: Lazy<Regex> = Lazy::new(|| {
@@ -17,22 +18,36 @@ static CAMEL_CASE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^(?:[A-Z][a-z]+)+$").unwrap()
 });
 
-/// UDF names recognized by the query system.
-static UDF_LIST: Lazy<Vec<&str>> = Lazy::new(|| {
-    vec![
-        "CURRENT_YEAR",
-        "CURRENT_MONTH",
-        "TODAY",
-        "YESTERDAY",
-        "LAST_YEAR",
-        "FDOM",
-        "LDOM",
-    ]
-});
+/// Comma-separated env override with the Cython `_env_list` semantics
+/// (validators.pyx:30): unset/blank → `default`; else split on ',', trim,
+/// drop blanks, upper-case when `upper`.
+fn env_list(name: &str, default: &[&str], upper: bool) -> Vec<String> {
+    match env::var(name) {
+        Ok(raw) if !raw.trim().is_empty() => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| if upper { s.to_uppercase() } else { s.to_string() })
+            .collect(),
+        _ => default.iter().map(|s| s.to_string()).collect(),
+    }
+}
 
-/// PostgreSQL constant names.
-static PG_CONSTANTS: Lazy<Vec<&str>> =
-    Lazy::new(|| vec!["CURRENT_DATE", "CURRENT_TIMESTAMP"]);
+/// Default relative-date keywords — MUST equal the 10-name Python DEFAULT_UDF_LIST tuple owned by TASK-872.
+const DEFAULT_UDF_LIST: &[&str] = &[
+    "CURRENT_YEAR", "CURRENT_MONTH", "TODAY", "YESTERDAY", "LAST_YEAR", "FDOM", "LDOM", "FDOW", "LDOW",
+    "LDOPM",
+];
+
+/// UDF names recognized by the query system (env `UDF_LIST`).
+static UDF_LIST: Lazy<Vec<String>> = Lazy::new(|| env_list("UDF_LIST", DEFAULT_UDF_LIST, true));
+
+/// PostgreSQL constant names (env `PG_CONSTANTS`).
+static PG_CONSTANTS: Lazy<Vec<String>> =
+    Lazy::new(|| env_list("PG_CONSTANTS", &["CURRENT_DATE", "CURRENT_TIMESTAMP"], true));
+
+/// PostgreSQL function allowlist (env `PG_UDF`, case preserved) — the ONLY raw pass-through.
+static PG_UDF: Lazy<Vec<String>> = Lazy::new(|| env_list("PG_UDF", &["now()"], false));
 
 // ---------------------------------------------------------------------------
 // Type checkers
@@ -76,21 +91,24 @@ pub fn is_boolean(value: &str) -> bool {
 #[pyfunction]
 #[pyo3(signature = (value,))]
 pub fn is_udf(value: &str) -> bool {
-    UDF_LIST.contains(&value.to_uppercase().as_str())
+    let upper = value.to_uppercase();
+    UDF_LIST.iter().any(|k| *k == upper)
 }
 
 /// Check if a value string is a known PG constant.
 #[pyfunction]
 #[pyo3(signature = (value,))]
 pub fn is_pgconstant(value: &str) -> bool {
-    PG_CONSTANTS.contains(&value.to_uppercase().as_str())
+    let upper = value.to_uppercase();
+    PG_CONSTANTS.iter().any(|k| *k == upper)
 }
 
-/// Check if value looks like a PG function call (contains parentheses or is `now()`).
+/// True only for an exact member of PG_UDF (default `now()`).
+/// A value that merely contains '(' is NOT a function (FEAT-167 G2).
 #[pyfunction]
 #[pyo3(signature = (value,))]
 pub fn is_pg_function(value: &str) -> bool {
-    value.contains('(') || value == "now()"
+    PG_UDF.iter().any(|k| k == value)
 }
 
 // ---------------------------------------------------------------------------
@@ -459,6 +477,27 @@ mod tests {
     #[test]
     fn test_is_valid_pg_function() {
         assert_eq!(is_valid("x", "now()", None, false), "now()");
+    }
+
+    #[test]
+    fn test_is_pg_function_exact() {
+        assert!(is_pg_function("now()"));
+        assert!(!is_pg_function("pg_sleep(5)"));
+        assert!(!is_pg_function("(select 1)"));
+        assert!(!is_pg_function("lower('x')"));
+    }
+
+    #[test]
+    fn test_is_valid_parenthesis_is_quoted() {
+        assert_eq!(is_valid("x", "pg_sleep(5)", None, false), "'pg_sleep(5)'");
+        assert_eq!(is_valid("x", "x) OR (1=1", None, false), "'x) OR (1=1'");
+        assert_eq!(is_valid("x", "pg_sleep(5)", None, true), "pg_sleep(5)");
+    }
+
+    #[test]
+    fn test_default_udf_list_has_week_helpers() {
+        assert!(is_udf("fdow") && is_udf("LDOW") && is_udf("Ldopm"));
+        assert_eq!(UDF_LIST.len(), 10);
     }
 
     #[test]
