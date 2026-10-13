@@ -187,6 +187,24 @@ cdef str quoteString(object value):
     else:
         return v
 
+cpdef object unquote_literal(object value):
+    """Inner text of a well-formed pre-quoted SQL literal, or None.
+
+    Well-formed: ``len >= 2``, starts and ends with ``'``, and every interior
+    ``'`` belongs to a ``''`` pair. The doubling is undone in the result
+    (``"'O''Brien'"`` -> ``"O'Brien"``). Anything else (raw text, a lone
+    quote, ``"'a'b'"``) returns None so the caller escapes it from scratch.
+    """
+    cdef str inner
+    if not isinstance(value, str) or len(value) < 2:
+        return None
+    if value[0] != "'" or value[-1] != "'":
+        return None
+    inner = value[1:-1]
+    if "'" in inner.replace("''", ""):
+        return None
+    return inner.replace("''", "'")
+
 cpdef bool_t is_callable(object value):
     """Return if value is a callable (function object).
     """
@@ -423,7 +441,8 @@ cpdef bool_t is_string(object value):
         ))
 
 cdef str to_string(object value):
-    return quoteString(escape_string(value))
+    # Typed string/varchar/field hints: idempotent quoting without quote-stripping.
+    return Entity.quoteString(value)
 
 cpdef object escape_string(object value):
     try:
@@ -583,32 +602,19 @@ cdef class Entity:
 
     @classmethod
     def quoteString(cls, value, bool_t no_dblquoting=True):
+        """Idempotent SQL literal quoting (FEAT-167 G4)."""
         v = value if value != 'None' else ""
         if value == 'null' or value == 'NULL':
             return v
         if isinstance(v, bool):
             return str(v)
         if isinstance(v, str):
-            # Handle double quotes
             if v.startswith('"') and no_dblquoting:
                 v = v.replace('"', "'")
-
-            # Check if the string starts or ends with a single quote
-            start_quote = v.startswith("'")
-            end_quote = v.endswith("'")
-
-            # Slice the string if it starts/ends with a quote
-            v = v[1:-1] if start_quote and end_quote else (v[1:] if start_quote else (v[:-1] if end_quote else v))
-
-            # Escape single quotes
-            v = v.replace("'", "''")
-
-            # # Add back the starting and/or ending quote if they were present
-            # if start_quote:
-            #     v = "'" + v
-            # if end_quote:
-            #     v += "'"
-
+            inner = unquote_literal(v)
+            if inner is None:
+                inner = v
+            v = inner.replace("'", "''")
         v = "'{}'".format(v) if type(v) == str else v
         return v
 
