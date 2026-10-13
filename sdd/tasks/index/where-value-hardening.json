@@ -35,7 +35,7 @@
       "feature_id": "FEAT-167",
       "feature": "where-value-hardening",
       "spec": "sdd/specs/where-value-hardening.spec.md",
-      "status": "in-progress",
+      "status": "done",
       "priority": "medium",
       "effort": "S",
       "depends_on": [
@@ -45,8 +45,9 @@
       "parallelism_notes": "needs the 10-name default from udf_keywords() produced by TASK-872 (querysource/utils/udf_list.py via types/validators.pyx) for test_vocabulary_week_keywords; pure Python, no rebuild",
       "assigned_to": null,
       "started_at": "2026-10-13T00:41:15+00:00",
-      "completed_at": null,
-      "file": "sdd/tasks/active/TASK-873-vocabulary-week-keywords.md"
+      "completed_at": "2026-10-13T01:27:15+00:00",
+      "file": "sdd/tasks/completed/TASK-873-vocabulary-week-keywords.md",
+      "verification": "verified"
     },
     {
       "id": "TASK-874",
