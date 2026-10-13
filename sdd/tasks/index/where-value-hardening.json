@@ -5,7 +5,7 @@
   "type": "feature",
   "base_branch": "dev",
   "created_at": "2026-10-12T22:11:37Z",
-  "completed_at": null,
+  "completed_at": "2026-10-13T01:33:35+00:00",
   "parallel_semantics": "exclusive",
   "validation_contract": "required",
   "tasks": [
@@ -138,7 +138,7 @@
       "feature_id": "FEAT-167",
       "feature": "where-value-hardening",
       "spec": "sdd/specs/where-value-hardening.spec.md",
-      "status": "in-progress",
+      "status": "done",
       "priority": "high",
       "effort": "M",
       "depends_on": [
@@ -150,8 +150,9 @@
       "parallelism_notes": "asserts the composed behaviour of TASK-873 (vocabulary keywords), TASK-876 (Entity.quoteString, is_valid via TASK-874/872) and TASK-877 (rs.quote_string, Rust builders); exclusive: rebuilds both the Cython and Rust extensions in its worktree before running the e2e renders",
       "assigned_to": null,
       "started_at": "2026-10-13T00:41:15+00:00",
-      "completed_at": null,
-      "file": "sdd/tasks/active/TASK-878-e2e-tests-docs.md"
+      "completed_at": "2026-10-13T01:33:35+00:00",
+      "file": "sdd/tasks/completed/TASK-878-e2e-tests-docs.md",
+      "verification": "verified"
     }
   ]
 }
